@@ -1,8 +1,20 @@
 import dtlpy as dl
-import torch.nn as nn
-from torchvision import models, transforms
 import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.nn.modules.linear import Linear
+from torch.nn.modules.module import T
+from torch.utils.data import Dataset, DataLoader, dataloader
 import torchvision
+from torchvision import models, transforms, datasets, io
+import time
+import os
+import copy
+import numpy as np
+from PIL import Image
+import json
+import glob
+import pandas as pd
 
 
 class ModelAdapter(dl.BaseModelAdapter):
@@ -15,14 +27,20 @@ class ModelAdapter(dl.BaseModelAdapter):
     #   2) implement the virtual methods for full adapter support
     #   3) add your _defaults
 
-    _defaults = {}
+    _defaults = {
+        'model_fname': 'my_resnet.pth',
+        'input_shape': (299,299,3)
+    }
 
     def __init__(self, model_entity):
         super(ModelAdapter, self).__init__(model_entity)
+        # self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")
 
     # ===============================
     # NEED TO IMPLEMENT THESE METHODS
     # ===============================
+     # READ: https://pytorch.org/tutorials/beginner/saving_loading_models.html
 
     def load(self, local_path, **kwargs):
         """ Loads model and populates self.model with a `runnable` model
@@ -47,14 +65,29 @@ class ModelAdapter(dl.BaseModelAdapter):
                 self.model =  models.resnet50(pretrained=True)
                 # TODO: do we want to add the softmax to the basic model or use torch.max stasifies?
                 self.model.eval()   # make the model ready for train - Question: does this impact training?
-            else:
-                self.logger.critical("Building the model from snapshot is not implemented yet")
-                raise RuntimeError
-        else:
-            self.logger.critical("Loading the model from given file is not implemented yet")
-            raise RuntimeError
-        
-        # TODO: does this also works on numpy?
+            else:  # build a finetune model
+                self.model = models.resnet50(pretrained=True)
+
+                # optional is to freeze all previous layers
+                # for param in self.model.parameters():
+                #     param.requires_grad = False
+
+                num_ftrs = self.model.fc.in_features
+                self.model.fc = nn.Linear(in_features=num_ftrs, out_features=self.nof_classes)
+
+                self.logger.info("Created new trainalbe resnet50 model with {} classes. ({})".
+                                format(self.nof_classes, self.model.name))
+        else:  # Load a model
+            #  TODO: Is it better to use model.load_state_dict
+            # model = TheModelClass(*args, **kwargs)
+            # model.load_state_dict(torch.load(PATH))
+            # model.eval()
+            model_path = "{d}/{f}.h5".format(d=local_path,f=self.model_name)
+            model = torch.load(model_path)
+            self.logger.info("Loaded model from {} succesfully".format(model_path))
+
+
+        # Save the pytorch preprocess
         self.preprocess = transforms.Compose(
             [
                 transforms.ToPILImage(),
@@ -77,6 +110,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         :param local_path: `str` directory path in local FileSystem
         """
         raise NotImplementedError("Please implement 'save' method in {}".format(self.__class__.__name__))
+        # torch.save(model, local_path)
 
     def train(self, data_path, dump_path, **kwargs):
         """ Train the model according to data in local_path and save the snapshot to dump_path
@@ -85,7 +119,107 @@ class ModelAdapter(dl.BaseModelAdapter):
         :param data_path: `str` local File System path to where the data was downloaded and converted at
         :param dump_path: `str` local File System path where to dump training mid-results (checkpoints, logs...)
         """
-        raise NotImplementedError("Please implement 'train' method in {}".format(self.__class__.__name__))
+        num_epochs = kwargs.get('num_epocs', 10)
+        
+        
+        # DATA TRANSFORMERS
+        data_transforms = {
+            'train': transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            ]),
+            'val': transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            ]),
+        }
+        
+        
+        criterion = nn.CrossEntropyLoss()
+        # Observe that all parameters are being optimized
+        optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
+        # Decay LR by a factor of 0.1 every 7 epochs
+        exp_lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+
+        # Prepare the data:
+        # TODO: how to use  different loaders (train / val)
+        dataset = DlpClassDataset(data_path=data_path, transform=data_transforms['train'])
+        dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
+        dataset_sizes = {x: len(datasets) for x in ['train', 'val']}
+        
+
+        since = time.time()
+        best_model_wts = copy.deepcopy(self.model.state_dict())
+        best_acc = 0.0
+
+        for epoch in range(num_epochs):
+            print('Epoch {}/{}'.format(epoch, num_epochs - 1))
+            print('-' * 10)
+
+            # Each epoch has a training and validation phase
+            for phase in ['train', 'val']:
+                if phase == 'train':
+                    self.model.train()  # Set model to training mode
+                else:
+                    self.model.eval()   # Set model to evaluate mode
+
+                running_loss = 0.0
+                running_corrects = 0
+
+                # Iterate over data.
+                for inputs, labels in dataloader:  #dataloaders[phase]:
+                    inputs = inputs.to(self.device)
+                    labels = labels.to(self.device)
+
+                    # zero the parameter gradients
+                    optimizer.zero_grad()
+
+                    # forward
+                    # track history if only in train
+                    with torch.set_grad_enabled(phase == 'train'):
+                        outputs = self.model(inputs)
+                        _, preds = torch.max(outputs, 1)
+                        loss = criterion(outputs, labels)
+
+                        # backward + optimize only if in training phase
+                        if phase == 'train':
+                            loss.backward()
+                            optimizer.step()
+
+                    # statistics
+                    running_loss += loss.item() * inputs.size(0)
+                    running_corrects += torch.sum(preds == labels.data)
+                if phase == 'train':
+                    exp_lr_scheduler.step()
+
+                epoch_loss = running_loss / dataset_sizes[phase]
+                epoch_acc = running_corrects.double() / dataset_sizes[phase]
+
+                msg  = '{} Loss: {:.4f} Acc: {:.4f}'.format(
+                    phase, epoch_loss, epoch_acc)
+                print(msg)
+                self.logger.info(msg)
+
+                # deep copy the model
+                if phase == 'val' and epoch_acc > best_acc:
+                    best_acc = epoch_acc
+                    best_model_wts = copy.deepcopy(self.model.state_dict())
+
+            print()
+
+        time_elapsed = time.time() - since
+        print('Training complete in {:.0f}m {:.0f}s'.format(
+            time_elapsed // 60, time_elapsed % 60))
+        print('Best val Acc: {:4f}'.format(best_acc))
+        self.logger.info('Best val Acc: {:4f}'.format(best_acc))
+
+        # load best model weights
+        self.model.load_state_dict(best_model_wts)
+        
 
     def predict(self, batch, **kwargs):
         """ Model inference (predictions) on batch of images
@@ -97,7 +231,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         """
         img_tensors = [self.preprocess(img.astype('uint8')) for img in batch]
         batch_tensor = torch.stack(img_tensors)
-        self.model.eval()
+        self.model.eval() # set dropout and batch normalization layers to evaluation mode
         preds_out = self.model(batch_tensor)
         percentages = torch.nn.functional.softmax(preds_out, dim=1)
 
@@ -130,7 +264,14 @@ class ModelAdapter(dl.BaseModelAdapter):
                            we already downloaded the data from dataloop platform
         :return:
         """
-        raise NotImplementedError("Please implement 'convert' method in {}".format(self.__class__.__name__))
+
+        # Create a dataset
+        self.dataset = DlpClassDataset(data_path=data_path, transform=None)
+
+        # optional use a datalopader
+        self.dataloader = DataLoader(self.dataset, batch_size=4, shuffle=True)
+        # TODO: how to differ between train and val datasets
+        
 
     # =============
     # DTLPY METHODS
@@ -188,3 +329,42 @@ class ModelAdapter(dl.BaseModelAdapter):
         return super(ModelAdapter, self).predict_items(items=items, with_upload=with_upload,
                                                        cleanup=cleanup, batch_size=batch_size, output_shape=output_shape,
                                                        **kwargs)
+
+
+class DlpClassDataset(Dataset):
+
+    def __init__(self, data_path, transform=None) -> None:
+        """
+        Args:
+            csv_file (string): Path to the csv file with annotations.
+            data_path (string): Directory with all the images (dataloop root dir).
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        self.root_dir = data_path
+        self.transform = transform
+
+        self.image_paths = []
+        self.image_labels = []
+    
+        for ann_json in glob("{}/json/*.json".format(self.root_dir)):
+            dlp_ann = json.load(open(ann_json, 'r'))
+            self.image_paths.append(self.root_dir + '/items/' + dlp_ann['filename'])
+            self.image_labels.append(self.snapshot.label_map.get(dlp_ann['annotations'][0]['label'], -1 ))
+    
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        img_name = os.path.join(self.root_dir, self.image_paths[idx])
+        image = io.read_image(img_name)
+        label = self.image_labels[idx]
+        sample = {'image': image, 'landmarks': label}
+
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample
