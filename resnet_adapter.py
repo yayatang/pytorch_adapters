@@ -49,51 +49,57 @@ class ModelAdapter(dl.BaseModelAdapter):
         """
         use_pretrained = getattr(self, 'use_pretrained', False)
         input_shape = getattr(self, 'input_shape', None)
-        include_top = getattr(self, 'include_top', True)
 
         msg = "Loading the model. pretrained = {}, local_path {}; input_shape {}".format(
                 use_pretrained, local_path, input_shape)
         print(msg)
         self.logger.info(msg)
 
-        if use_pretrained or local_path is None:
-            if use_pretrained or include_top:
-                self.model = models.resnet50(pretrained=True)
-                self.label_map = json.load(open('imagenet_labels.json', 'r'))
-                # TODO: do we want to add the softmax to the basic model or use torch.max stasifies?
-                self.model.eval()   # make the model ready for train - Question: does this impact training?
-            else:  # build a finetune model
-                self.model = models.resnet50(pretrained=True)
-
-                # optional is to freeze all previous layers - which is better for smaller data
-                for param in self.model.parameters():
-                    param.requires_grad = False
-
-                num_ftrs = self.model.fc.in_features
-                # New layer added is by defauly requires_grad=True
-                self.model.fc = nn.Linear(in_features=num_ftrs, out_features=self.nof_classes)
-
-                self.logger.info("Created new trainable resnet50 model with {} classes. ({})".
-                                 format(self.nof_classes, self.model.name))
-
-                self.label_map = {idx: "?" for idx in range(self.nof_classes)}
-        else:  # Load a model
+        if local_path is not None:
+            self.logger.info("Loading a model from {}".format(local_path))
             #  TODO: Is it better to use model.load_state_dict
             # model = TheModelClass(*args, **kwargs)
             # model.load_state_dict(torch.load(PATH))
-            # model.eval()
             model_path = "{d}/{f}".format(d=local_path, f=self.model_name)
             self.model = torch.load(model_path)
+            self.model.eval()
             # How to load the label_map from loaded model
             self.logger.info("Loaded model from {} successfully".format(model_path))
 
+        elif use_pretrained:
+            self.logger.info('Using the pytorch pretrained model')
+            self.model = models.resnet50(pretrained=True)
+            self.label_map = json.load(open('imagenet_labels.json', 'r'))
+            self.model.eval()
+        else:
+            self.logger.info("Build a dedicated model for specific labels. This requires `label_map`")
+            if not hasattr(self, 'label_map'):
+                raise RuntimeError("Cannot create specific model w/o a label_map")
+            if not hasattr(self, 'nof_classes'):
+                self.nof_classes = len(self.label_map)
+
+            self.model = models.resnet50(pretrained=True)
+
+            # optional is to freeze all previous layers - which is better for smaller data
+            for param in self.model.parameters():
+                param.requires_grad = False
+
+            num_ftrs = self.model.fc.in_features
+            # New layer added is by defauly requires_grad=True
+            self.model.fc = nn.Linear(in_features=num_ftrs, out_features=self.nof_classes)
+
+            self.logger.info("Created new trainable resnet50 model with {} classes. ({})".
+                             format(self.nof_classes, self.model.name))
+
+            self.label_map = {idx: "?" for idx in range(self.nof_classes)}
 
         # Save the pytorch preprocess
         self.preprocess = transforms.Compose(
             [
                 transforms.ToPILImage(),
                 transforms.Resize(256),
-                transforms.CenterCrop(224),
+                # transforms.CenterCrop(224),
+                transforms.CenterCrop(self.input_shape[:2]),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ]
