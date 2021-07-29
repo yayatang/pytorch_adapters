@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image
 import json
 import glob
+from pathlib import Path
 import pandas as pd
 
 
@@ -85,7 +86,7 @@ class ModelAdapter(dl.BaseModelAdapter):
                 param.requires_grad = False
 
             num_ftrs = self.model.fc.in_features
-            # New layer added is by defauly requires_grad=True
+            # New layer added is by default requires_grad=True
             self.model.fc = nn.Linear(in_features=num_ftrs, out_features=self.nof_classes)
 
             self.logger.info("Created new trainable resnet50 model with {} classes. ({})".
@@ -344,8 +345,9 @@ class DlpClassDataset(Dataset):
 
         self.image_paths = []
         self.image_labels = []
-    
-        for ann_json in glob("{}/json/*.json".format(self.root_dir)):
+
+        for ann_json in Path(self.root_dir).rglob('*.json'):
+        # for ann_json in glob.glob("{}/json/**/*.json".format(self.root_dir)):
             dlp_ann = json.load(open(ann_json, 'r'))
             self.image_paths.append(self.root_dir + '/items/' + dlp_ann['filename'])
             self.image_labels.append(self.snapshot.label_map.get(dlp_ann['annotations'][0]['label'], -1 ))
