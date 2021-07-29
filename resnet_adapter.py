@@ -350,7 +350,7 @@ class DlpClassDataset(Dataset):
         # for ann_json in glob.glob("{}/json/**/*.json".format(self.root_dir)):
             dlp_ann = json.load(open(ann_json, 'r'))
             self.image_paths.append(self.root_dir + '/items/' + dlp_ann['filename'])
-            self.image_labels.append(self.snapshot.label_map.get(dlp_ann['annotations'][0]['label'], -1 ))
+            self.image_labels.append(dlp_ann['annotations'][0]['label'])
     
     def __len__(self):
         return len(self.image_paths)
