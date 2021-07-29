@@ -151,7 +151,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         # TODO: how to use  different loaders (train / val)
         dataset = DlpClassDataset(data_path=data_path, transform=data_transforms['train'])
         dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
-        dataset_sizes = {x: len(datasets) for x in ['train', 'val']}
+        dataset_sizes = {x: len(dataset) for x in ['train', 'val']}
         
 
         since = time.time()
