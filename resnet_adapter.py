@@ -19,23 +19,19 @@ import pandas as pd
 
 class ModelAdapter(dl.BaseModelAdapter):
     """
-    Specific Model adapter.
+    resnet Model adapter using pytorch.
     The class bind Dataloop model and snapshot entities with model code implementation
     """
-    # TODO:
-    #   1) docstring for your ModelAdapter
-    #   2) implement the virtual methods for full adapter support
-    #   3) add your _defaults
-
     _defaults = {
         'model_fname': 'my_resnet.pth',
-        'input_shape': (299,299,3)
+        'input_shape': (299, 299, 3),
     }
 
     def __init__(self, model_entity):
         super(ModelAdapter, self).__init__(model_entity)
         # self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.device = torch.device("cpu")
+        self.label_map = {}
 
     # ===============================
     # NEED TO IMPLEMENT THESE METHODS
@@ -62,29 +58,34 @@ class ModelAdapter(dl.BaseModelAdapter):
 
         if use_pretrained or local_path is None:
             if use_pretrained or include_top:
-                self.model =  models.resnet50(pretrained=True)
+                self.model = models.resnet50(pretrained=True)
+                self.label_map = json.load(open('imagenet_labels.json', 'r'))
                 # TODO: do we want to add the softmax to the basic model or use torch.max stasifies?
                 self.model.eval()   # make the model ready for train - Question: does this impact training?
             else:  # build a finetune model
                 self.model = models.resnet50(pretrained=True)
 
-                # optional is to freeze all previous layers
-                # for param in self.model.parameters():
-                #     param.requires_grad = False
+                # optional is to freeze all previous layers - which is better for smaller data
+                for param in self.model.parameters():
+                    param.requires_grad = False
 
                 num_ftrs = self.model.fc.in_features
+                # New layer added is by defauly requires_grad=True
                 self.model.fc = nn.Linear(in_features=num_ftrs, out_features=self.nof_classes)
 
-                self.logger.info("Created new trainalbe resnet50 model with {} classes. ({})".
-                                format(self.nof_classes, self.model.name))
+                self.logger.info("Created new trainable resnet50 model with {} classes. ({})".
+                                 format(self.nof_classes, self.model.name))
+
+                self.label_map = {idx: "?" for idx in range(self.nof_classes)}
         else:  # Load a model
             #  TODO: Is it better to use model.load_state_dict
             # model = TheModelClass(*args, **kwargs)
             # model.load_state_dict(torch.load(PATH))
             # model.eval()
-            model_path = "{d}/{f}.h5".format(d=local_path,f=self.model_name)
-            model = torch.load(model_path)
-            self.logger.info("Loaded model from {} succesfully".format(model_path))
+            model_path = "{d}/{f}".format(d=local_path, f=self.model_name)
+            self.model = torch.load(model_path)
+            # How to load the label_map from loaded model
+            self.logger.info("Loaded model from {} successfully".format(model_path))
 
 
         # Save the pytorch preprocess
@@ -97,8 +98,6 @@ class ModelAdapter(dl.BaseModelAdapter):
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ]
         )
-        
-        
 
     def save(self, local_path, **kwargs):
         """ saves configuration and weights locally
@@ -140,8 +139,8 @@ class ModelAdapter(dl.BaseModelAdapter):
         
         
         criterion = nn.CrossEntropyLoss()
-        # Observe that all parameters are being optimized
-        optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
+        # Only last fully connected layer is being updated
+        optimizer = optim.SGD(self.model.fc.parameters(), lr=0.001, momentum=0.9)
         # Decay LR by a factor of 0.1 every 7 epochs
         exp_lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 
@@ -220,7 +219,6 @@ class ModelAdapter(dl.BaseModelAdapter):
         # load best model weights
         self.model.load_state_dict(best_model_wts)
         
-
     def predict(self, batch, **kwargs):
         """ Model inference (predictions) on batch of images
 
@@ -252,7 +250,6 @@ class ModelAdapter(dl.BaseModelAdapter):
             batch_predictions.append(item_pred)
         return batch_predictions
 
-
     def convert(self, data_path, **kwargs):
         """ Convert Dataloop structure data to model structured
 
@@ -272,7 +269,6 @@ class ModelAdapter(dl.BaseModelAdapter):
         self.dataloader = DataLoader(self.dataset, batch_size=4, shuffle=True)
         # TODO: how to differ between train and val datasets
         
-
     # =============
     # DTLPY METHODS
     # Do not change
