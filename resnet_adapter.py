@@ -365,7 +365,7 @@ class DlpClassDataset(Dataset):
         img_name = os.path.join(self.root_dir, self.image_paths[idx])
         # image = io.read_image(img_name)
         image = Image.open(img_name)
-        label = int(self.label_to_id(self.image_labels[idx], -1))
+        label = int(self.label_to_id.get(self.image_labels[idx], -1))
         if self.transform:
             image = self.transform(image)
 
