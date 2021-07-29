@@ -150,7 +150,7 @@ class ModelAdapter(dl.BaseModelAdapter):
 
         # Prepare the data:
         # TODO: how to use  different loaders (train / val)
-        dataset = DlpClassDataset(data_path=data_path, transform=data_transforms['train'])
+        dataset = DlpClassDataset(data_path=data_path, label_map=self.label_map, transform=data_transforms['train'])
         dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
         dataset_sizes = {x: len(dataset) for x in ['train', 'val']}
         
@@ -267,7 +267,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         """
 
         # Create a dataset
-        self.dataset = DlpClassDataset(data_path=data_path, transform=None)
+        self.dataset = DlpClassDataset(data_path=data_path, label_map=self.label_map, transform=None)
 
         # optional use a datalopader
         self.dataloader = DataLoader(self.dataset, batch_size=4, shuffle=True)
