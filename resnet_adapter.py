@@ -129,6 +129,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         data_transforms = {
             'train': transforms.Compose([
                 transforms.RandomResizedCrop(224),
+                # transforms.RandomResizedCrop(self.input_shape[:2]),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -362,9 +363,7 @@ class DlpClassDataset(Dataset):
         img_name = os.path.join(self.root_dir, self.image_paths[idx])
         image = io.read_image(img_name)
         label = self.image_labels[idx]
-        sample = {'image': image, 'landmarks': label}
-
         if self.transform:
-            sample = self.transform(sample)
+            image = self.transform(image)
 
-        return sample
+        return image, label
