@@ -89,7 +89,7 @@ class ModelAdapter(dl.BaseModelAdapter):
             self.model.fc = nn.Linear(in_features=num_ftrs, out_features=self.nof_classes)
 
             self.logger.info("Created new trainable resnet50 model with {} classes. ({})".
-                             format(self.nof_classes, self.model.name))
+                             format(self.nof_classes, self.model_entity.name))
 
         # Save the pytorch preprocess
         self.preprocess = transforms.Compose(
