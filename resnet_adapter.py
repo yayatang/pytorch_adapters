@@ -333,7 +333,7 @@ class ModelAdapter(dl.BaseModelAdapter):
 
 class DlpClassDataset(Dataset):
 
-    def __init__(self, data_path, transform=None) -> None:
+    def __init__(self, data_path, label_map, transform=None) -> None:
         """
         Args:
             csv_file (string): Path to the csv file with annotations.
@@ -343,6 +343,8 @@ class DlpClassDataset(Dataset):
         """
         self.root_dir = data_path
         self.transform = transform
+        self.label_map = label_map
+        self.label_to_id = {v: k for k, v in label_map.items()}
 
         self.image_paths = []
         self.image_labels = []
@@ -363,7 +365,7 @@ class DlpClassDataset(Dataset):
         img_name = os.path.join(self.root_dir, self.image_paths[idx])
         # image = io.read_image(img_name)
         image = Image.open(img_name)
-        label = self.image_labels[idx]
+        label = int(self.label_to_id(self.image_labels[idx], -1))
         if self.transform:
             image = self.transform(image)
 
