@@ -91,8 +91,6 @@ class ModelAdapter(dl.BaseModelAdapter):
             self.logger.info("Created new trainable resnet50 model with {} classes. ({})".
                              format(self.nof_classes, self.model.name))
 
-            self.label_map = {idx: "?" for idx in range(self.nof_classes)}
-
         # Save the pytorch preprocess
         self.preprocess = transforms.Compose(
             [
@@ -126,7 +124,6 @@ class ModelAdapter(dl.BaseModelAdapter):
         """
         num_epochs = kwargs.get('num_epocs', 10)
         
-        
         # DATA TRANSFORMERS
         data_transforms = {
             'train': transforms.Compose([
@@ -142,7 +139,6 @@ class ModelAdapter(dl.BaseModelAdapter):
                 transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
             ]),
         }
-        
         
         criterion = nn.CrossEntropyLoss()
         # Only last fully connected layer is being updated
