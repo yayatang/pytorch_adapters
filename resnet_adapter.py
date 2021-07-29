@@ -70,7 +70,8 @@ class ModelAdapter(dl.BaseModelAdapter):
         elif use_pretrained:
             self.logger.info('Using the pytorch pretrained model')
             self.model = models.resnet50(pretrained=True)
-            self.label_map = json.load(open('imagenet_labels.json', 'r'))
+            label_map_json = json.load(open('imagenet_labels.json', 'r'))
+            self.label_map = {int(k): v for k, v in label_map_json}
             self.model.eval()
         else:
             self.logger.info("Build a dedicated model for specific labels. This requires `label_map`")
@@ -242,7 +243,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         # for pred_score, high_pred_index in zip(scores, predictions_idxs):
         for img_pred in percentages:
             pred_score, high_pred_index = torch.max(img_pred, 0)
-            pred_label = self.label_map.get(str(high_pred_index.item()), 'UNKNOWN')
+            pred_label = self.label_map.get(high_pred_index.item(), 'UNKNOWN')
 
             item_pred = dl.ml.predictions_utils.add_classification(
                 label=pred_label,
