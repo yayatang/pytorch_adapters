@@ -164,6 +164,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         for epoch in range(num_epochs):
             print('Epoch {}/{}  duration {:1.2f}'.format(epoch, num_epochs - 1, time.time() - epoch_time))
             print('-' * 25)
+            epoch_time = time.time()
 
             # Each epoch has a training and validation phase
             for phase in ['train', 'val']:
@@ -205,15 +206,14 @@ class ModelAdapter(dl.BaseModelAdapter):
                 epoch_acc = running_corrects.double() / dataset_sizes[phase]
 
                 msg = '{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc)
-                # print(msg)
-                self.logger.info(msg)
+                print(msg)
+                # self.logger.info(msg)
 
                 # deep copy the model
                 if phase == 'val' and epoch_acc > best_acc:
                     best_acc = epoch_acc
                     best_model_wts = copy.deepcopy(self.model.state_dict())
 
-            epoch_time = time.time()
             print()
 
         time_elapsed = time.time() - since
