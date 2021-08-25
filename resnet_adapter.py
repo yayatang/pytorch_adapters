@@ -152,7 +152,6 @@ class ModelAdapter(dl.BaseModelAdapter):
         # Prepare the data:
         # TODO: how to use  different loaders (train / val)
         if kwargs.get('use_crops', False):
-            DlpCropsDataset
             dataset = DlpCropsDataset(data_path=data_path, label_map=self.label_map, transform=data_transforms['train'])
         else:  # default = entire image
             dataset = DlpClassDataset(data_path=data_path, label_map=self.label_map, transform=data_transforms['train'])
