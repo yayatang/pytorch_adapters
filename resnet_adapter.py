@@ -56,7 +56,14 @@ class ModelAdapter(dl.BaseModelAdapter):
         print(msg)
         self.logger.info(msg)
 
-        if local_path is not None:
+        if use_pretrained:
+            self.logger.info('Using the pytorch pretrained model')
+            self.model = models.resnet50(pretrained=True)
+            label_map_json = json.load(open('imagenet_labels.json', 'r'))
+            self.label_map = {int(k): v for k, v in label_map_json}
+            self.model.eval()
+
+        elif local_path is not None:
             self.logger.info("Loading a model from {}".format(local_path))
             #  TODO: Is it better to use model.load_state_dict
             # model = TheModelClass(*args, **kwargs)
@@ -67,12 +74,6 @@ class ModelAdapter(dl.BaseModelAdapter):
             # How to load the label_map from loaded model
             self.logger.info("Loaded model from {} successfully".format(model_path))
 
-        elif use_pretrained:
-            self.logger.info('Using the pytorch pretrained model')
-            self.model = models.resnet50(pretrained=True)
-            label_map_json = json.load(open('imagenet_labels.json', 'r'))
-            self.label_map = {int(k): v for k, v in label_map_json}
-            self.model.eval()
         else:
             self.logger.info("Build a dedicated model for specific labels. This requires `label_map`")
             if not hasattr(self, 'label_map'):
