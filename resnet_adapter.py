@@ -372,3 +372,51 @@ class DlpClassDataset(Dataset):
             image = self.transform(image)
 
         return image, label
+
+class DlpCropsDataset(Dataset):
+    def __init__(self, data_path, label_map, transform=None) -> None:
+        """generates a torch dataset of all crops on annotaion boxes given from a dataloop directory structure
+
+        Args:
+            data_path (string): path to download folder of images and jsons
+            label_map (dict): dict label: id
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        self.root_dir = data_path
+        self.transform = transform
+        self.label_map = label_map
+        self.label_to_id = {v: k for k, v in label_map.items()}
+
+        self.image_paths = []
+        self.image_crops = []
+        self.image_labels = []
+        for item_json_path in Path(self.root_dir).rglob('*.json'):
+            item_json = json.load(open(item_json_path, 'r'))
+
+            for ann in item_json['annotations']:
+                ann_label = ann['label']
+                ann_crop = [(ann['coordinates'][0]['x'],ann['coordinates'][0]['y']), 
+                            (ann['coordinates'][1]['x'],ann['coordinates'][1]['y']) ]  # [xy, xy]
+
+                self.image_paths.append(self.root_dir + '/items/' + item_json['filename'])
+                self.image_crops.append(ann_crop)
+                self.image_labels.append(ann_label)
+
+    def __len__(self):
+        return len(self.image_paths)
+    
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        img_name = os.path.join(self.root_dir, self.image_paths[idx])
+        # image = io.read_image(img_name)
+        image = Image.open(img_name)
+        crop = image.crop(self.image_crops[idx])
+        label = int(self.label_to_id.get(self.image_labels[idx], -1))
+        if self.transform:
+            image = self.transform(image)
+
+        return crop, label
+    
