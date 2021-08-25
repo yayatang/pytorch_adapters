@@ -62,7 +62,7 @@ class ModelAdapter(dl.BaseModelAdapter):
             label_map_json = json.load(
                 open(os.path.join(os.path.dirname(__file__), 'imagenet_labels.json'), 'r')
                 )
-            self.label_map = {int(k): v for k, v in label_map_json}
+            self.label_map = {int(k): v for k, v in label_map_json.items()}
             self.model.eval()
 
         elif local_path is not None:
