@@ -59,7 +59,9 @@ class ModelAdapter(dl.BaseModelAdapter):
         if use_pretrained:
             self.logger.info('Using the pytorch pretrained model')
             self.model = models.resnet50(pretrained=True)
-            label_map_json = json.load(open('imagenet_labels.json', 'r'))
+            label_map_json = json.load(
+                open(os.path.join(os.path.dirname(__file__), 'imagenet_labels.json'), 'r')
+                )
             self.label_map = {int(k): v for k, v in label_map_json}
             self.model.eval()
 
