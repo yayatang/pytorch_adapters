@@ -1,21 +1,14 @@
-import dtlpy as dl
+import json
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.nn.modules.linear import Linear
-from torch.nn.modules.module import T
-from torch.utils.data import Dataset, DataLoader, dataloader
-import torchvision
-from torchvision import models, transforms, datasets, io
+from torch.utils.data import DataLoader
+from torchvision import transforms
 import time
-import os
 import copy
-import numpy as np
-from PIL import Image
-import json
-import glob
-from pathlib import Path
-import pandas as pd
+import os
+import dtlpy as dl
+from dtlpy.ml.ml_dataset import get_torch_dataset
 
 
 class ModelAdapter(dl.BaseModelAdapter):
@@ -23,22 +16,20 @@ class ModelAdapter(dl.BaseModelAdapter):
     resnet Model adapter using pytorch.
     The class bind Dataloop model and snapshot entities with model code implementation
     """
-    _defaults = {
+    configuration = {
         'model_fname': 'my_resnet.pth',
         'input_shape': (299, 299, 3),
     }
 
     def __init__(self, model_entity):
         super(ModelAdapter, self).__init__(model_entity)
-        # self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.device = torch.device("cpu")
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.label_map = {}
 
     # ===============================
     # NEED TO IMPLEMENT THESE METHODS
     # ===============================
-     # READ: https://pytorch.org/tutorials/beginner/saving_loading_models.html
-
+    # READ: https://pytorch.org/tutorials/beginner/saving_loading_models.html
     def load(self, local_path, **kwargs):
         """ Loads model and populates self.model with a `runnable` model
 
@@ -48,61 +39,26 @@ class ModelAdapter(dl.BaseModelAdapter):
 
         :param local_path: `str` directory path in local FileSystem
         """
-        use_pretrained = getattr(self, 'use_pretrained', False)
-        input_shape = getattr(self, 'input_shape', None)
+        weights_filename = self.snapshot.configuration.get('weights_filename', 'model.pth')
+        input_shape = self.snapshot.configuration.get('input_shape', (256, 256))
+        classes_filename = self.snapshot.configuration.get('classes_filename', 'classes.json')
+        # load classes
+        with open(os.path.join(local_path, classes_filename)) as f:
+            self.label_map = json.load(f)
 
-        msg = "Loading the model. pretrained = {}, local_path {}; input_shape {}".format(
-                use_pretrained, local_path, input_shape)
-        print(msg)
-        self.logger.info(msg)
-
-        if use_pretrained:
-            self.logger.info('Using the pytorch pretrained model')
-            self.model = models.resnet50(pretrained=True)
-            label_map_json = json.load(
-                open(os.path.join(os.path.dirname(__file__), 'imagenet_labels.json'), 'r')
-                )
-            self.label_map = {int(k): v for k, v in label_map_json.items()}
-            self.model.eval()
-
-        elif local_path is not None:
-            self.logger.info("Loading a model from {}".format(local_path))
-            #  TODO: Is it better to use model.load_state_dict
-            # model = TheModelClass(*args, **kwargs)
-            # model.load_state_dict(torch.load(PATH))
-            model_path = "{d}/{f}".format(d=local_path, f=self.model_name)
-            self.model = torch.load(model_path)
-            self.model.eval()
-            # How to load the label_map from loaded model
-            self.logger.info("Loaded model from {} successfully".format(model_path))
-
-        else:
-            self.logger.info("Build a dedicated model for specific labels. This requires `label_map`")
-            if not hasattr(self, 'label_map'):
-                raise RuntimeError("Cannot create specific model w/o a label_map")
-            if not hasattr(self, 'nof_classes'):
-                self.nof_classes = len(self.label_map)
-
-            self.model = models.resnet50(pretrained=True)
-
-            # optional is to freeze all previous layers - which is better for smaller data
-            for param in self.model.parameters():
-                param.requires_grad = False
-
-            num_ftrs = self.model.fc.in_features
-            # New layer added is by default requires_grad=True
-            self.model.fc = nn.Linear(in_features=num_ftrs, out_features=self.nof_classes)
-
-            self.logger.info("Created new trainable resnet50 model with {} classes. ({})".
-                             format(self.nof_classes, self.model_entity.name))
-
+        # load model arch and state
+        model_path = os.path.join(local_path, weights_filename)
+        self.logger.info("Loading a model from {}".format(local_path))
+        self.model = torch.load(model_path)
+        self.model.to(self.device)
+        self.model.eval()
+        # How to load the label_map from loaded model
+        self.logger.info("Loaded model from {} successfully".format(model_path))
         # Save the pytorch preprocess
         self.preprocess = transforms.Compose(
             [
                 transforms.ToPILImage(),
-                transforms.Resize(256),
-                # transforms.CenterCrop(224),
-                transforms.CenterCrop(self.input_shape[:2]),
+                transforms.Resize(input_shape),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ]
@@ -117,59 +73,84 @@ class ModelAdapter(dl.BaseModelAdapter):
 
         :param local_path: `str` directory path in local FileSystem
         """
-        raise NotImplementedError("Please implement 'save' method in {}".format(self.__class__.__name__))
-        # torch.save(model, local_path)
+        weights_filename = kwargs.get('weights_filename', 'model.pth')
+        classes_filename = kwargs.get('classes_filename', 'classes.json')
 
-    def train(self, data_path, dump_path, **kwargs):
+        torch.save(self.model, os.path.join(local_path, weights_filename))
+        with open(os.path.join(local_path, classes_filename), 'w') as f:
+            json.dump(self.label_map, f)
+        self.snapshot.configuration['weights_filename'] = weights_filename
+        self.snapshot.configuration['label_map'] = self.label_map
+        self.snapshot.update()
+
+    def train(self, data_path, output_path, **kwargs):
         """ Train the model according to data in local_path and save the snapshot to dump_path
 
             Virtual method - need to implement
         :param data_path: `str` local File System path to where the data was downloaded and converted at
-        :param dump_path: `str` local File System path where to dump training mid-results (checkpoints, logs...)
+        :param output_path: `str` local File System path where to dump training mid-results (checkpoints, logs...)
         """
-        num_epochs = kwargs.get('num_epocs', 10)
-        
+        configuration = self.configuration
+        configuration.update(self.snapshot.configuration)
+        num_epochs = configuration.get('num_epochs', 10)
+        batch_size = configuration.get('batch_size', 64)
+        input_size = configuration.get('input_size', 256)
+
         # DATA TRANSFORMERS
         data_transforms = {
             'train': transforms.Compose([
-                transforms.RandomResizedCrop(224),
-                # transforms.RandomResizedCrop(self.input_shape[:2]),
+                transforms.ToPILImage(),
+                transforms.Resize((input_size, input_size)),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
             ]),
             'val': transforms.Compose([
-                transforms.Resize(256),
-                transforms.CenterCrop(224),
+                transforms.ToPILImage(),
+                transforms.Resize((input_size, input_size)),
                 transforms.ToTensor(),
                 transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
             ]),
         }
-        
+
+        ####################
+        # Prepare the data #
+        ####################
+        train_dataset = get_torch_dataset()(data_path=os.path.join(data_path, 'train'),
+                                            dataset_entity=self.snapshot.dataset,
+                                            annotation_type=dl.AnnotationType.CLASSIFICATION,
+                                            transforms=data_transforms['train'])
+        val_dataset = get_torch_dataset()(data_path=os.path.join(data_path, 'validation'),
+                                          dataset_entity=self.snapshot.dataset,
+                                          annotation_type=dl.AnnotationType.CLASSIFICATION,
+                                          transforms=data_transforms['val'])
+
+        dataloaders = {'train': DataLoader(train_dataset, batch_size=batch_size, shuffle=True),
+                       'val': DataLoader(val_dataset, batch_size=batch_size, shuffle=True)}
+        dataset_sizes = {phase: len(dataloaders[phase]) for phase in ['train', 'val']}
+
+        #################
+        # prepare model #
+        #################
+        n_classes = len(train_dataset.id_to_label_map)
+        self.logger.info('Setting last layer for {} classes'.format(n_classes))
+        num_ftrs = self.model.fc.in_features
+        self.model.fc = nn.Linear(num_ftrs, n_classes)
+
         criterion = nn.CrossEntropyLoss()
-        # Only last fully connected layer is being updated
-        optimizer = optim.SGD(self.model.fc.parameters(), lr=0.001, momentum=0.9)
+        # Observe that all parameters are being optimized
+        optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
         # Decay LR by a factor of 0.1 every 7 epochs
         exp_lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
-
-        # Prepare the data:
-        # TODO: how to use  different loaders (train / val)
-        if kwargs.get('use_crops', False):
-            dataset = DlpCropsDataset(data_path=data_path, label_map=self.label_map, transform=data_transforms['train'])
-        else:  # default = entire image
-            dataset = DlpClassDataset(data_path=data_path, label_map=self.label_map, transform=data_transforms['train'])
-        dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
-        dataset_sizes = {x: len(dataset) for x in ['train', 'val']}
-        
 
         since = time.time()
         epoch_time = time.time()
         best_model_wts = copy.deepcopy(self.model.state_dict())
         best_acc = 0.0
-
+        self.model.to(device=self.device)
         for epoch in range(num_epochs):
-            print('Epoch {}/{}  duration {:1.2f}'.format(epoch, num_epochs - 1, time.time() - epoch_time))
-            print('-' * 25)
+            self.logger.info('Epoch {}/{}  duration {:1.2f}'.format(epoch, num_epochs - 1, time.time() - epoch_time))
+            self.logger.info('-' * 25)
             epoch_time = time.time()
 
             # Each epoch has a training and validation phase
@@ -177,15 +158,15 @@ class ModelAdapter(dl.BaseModelAdapter):
                 if phase == 'train':
                     self.model.train()  # Set model to training mode
                 else:
-                    self.model.eval()   # Set model to evaluate mode
+                    self.model.eval()  # Set model to evaluate mode
 
                 running_loss = 0.0
                 running_corrects = 0
 
                 # Iterate over data.
-                for inputs, labels in dataloader:  #dataloaders[phase]:
+                for inputs, labels in dataloaders[phase]:
                     inputs = inputs.to(self.device)
-                    labels = labels.to(self.device)
+                    labels = labels.to(self.device).long()
 
                     # zero the parameter gradients
                     optimizer.zero_grad()
@@ -211,26 +192,21 @@ class ModelAdapter(dl.BaseModelAdapter):
                 epoch_loss = running_loss / dataset_sizes[phase]
                 epoch_acc = running_corrects.double() / dataset_sizes[phase]
 
-                msg = '{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc)
-                print(msg)
-                # self.logger.info(msg)
+                self.logger.info('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
 
                 # deep copy the model
                 if phase == 'val' and epoch_acc > best_acc:
                     best_acc = epoch_acc
                     best_model_wts = copy.deepcopy(self.model.state_dict())
 
-            print()
-
         time_elapsed = time.time() - since
-        print('Training complete in {:.0f}m {:.0f}s'.format(
-            time_elapsed // 60, time_elapsed % 60))
-        print('Best val Acc: {:4f}'.format(best_acc))
+        self.logger.info('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
         self.logger.info('Best val Acc: {:4f}'.format(best_acc))
 
         # load best model weights
         self.model.load_state_dict(best_model_wts)
-        
+        self.label_map = train_dataset.id_to_label_map
+
     def predict(self, batch, **kwargs):
         """ Model inference (predictions) on batch of images
 
@@ -240,29 +216,24 @@ class ModelAdapter(dl.BaseModelAdapter):
         :return: `list[dl.AnnotationCollection]` each collection is per each image / item in the batch
         """
         img_tensors = [self.preprocess(img.astype('uint8')) for img in batch]
-        batch_tensor = torch.stack(img_tensors)
-        self.model.eval() # set dropout and batch normalization layers to evaluation mode
+        batch_tensor = torch.stack(img_tensors).to(self.device)
         preds_out = self.model(batch_tensor)
         percentages = torch.nn.functional.softmax(preds_out, dim=1)
-
-        batch_predictions = []
-        # scores, predictions_idxs = torch.max(percentages, 1)
-        # for pred_score, high_pred_index in zip(scores, predictions_idxs):
+        batch_predictions = list()
         for img_pred in percentages:
             pred_score, high_pred_index = torch.max(img_pred, 0)
-            pred_label = self.label_map.get(high_pred_index.item(), 'UNKNOWN')
-
-            item_pred = dl.ml.predictions_utils.add_classification(
-                label=pred_label,
-                score=pred_score.item(),
-                adapter=self,
-                collection=None
-            )
+            pred_label = self.label_map.get(str(high_pred_index.item()), 'UNKNOWN')
+            collection = dl.AnnotationCollection()
+            collection.add(annotation_definition=dl.Classification(label=pred_label),
+                           model_info={'name': self.model_entity.name,
+                                       'confidence': pred_score.item(),
+                                       'model_id': self.model_entity.id,
+                                       'snapshot_id': self.snapshot.id})
             self.logger.debug("Predicted {:20} ({:1.3f})".format(pred_label, pred_score))
-            batch_predictions.append(item_pred)
+            batch_predictions.append(collection)
         return batch_predictions
 
-    def convert(self, data_path, **kwargs):
+    def convert_from_dtlpy(self, data_path, **kwargs):
         """ Convert Dataloop structure data to model structured
 
             Virtual method - need to implement
@@ -274,155 +245,4 @@ class ModelAdapter(dl.BaseModelAdapter):
         :return:
         """
 
-        # Create a dataset
-        self.dataset = DlpClassDataset(data_path=data_path, label_map=self.label_map, transform=None)
-
-        # optional use a datalopader
-        self.dataloader = DataLoader(self.dataset, batch_size=4, shuffle=True)
-        # TODO: how to differ between train and val datasets
-        
-    # =============
-    # DTLPY METHODS
-    # Do not change
-    # =============
-    # function are here to ease the traceback...
-    def load_from_snapshot(self, local_path, snapshot_id, **kwargs):
-        """ Loads a model from given `snapshot`.
-            Reads configurations and instantiate self.snapshot
-            Downloads the snapshot bucket (if available)
-
-        :param local_path:  `str` directory path in local FileSystem to download the snapshot to
-        :param snapshot_id:  `str` snapshot id
-        """
-        return super(ModelAdapter, self).load_from_snapshot(local_path=local_path, snapshot_id=snapshot_id, **kwargs)
-
-    def save_to_snapshot(self, local_path, snapshot_name=None, description=None, cleanup=False, **kwargs):
-        """ Saves configuration and weights to new snapshot bucket
-            loads only applies for remote buckets
-
-        :param local_path: `str` directory path in local FileSystem
-        :param snapshot_name: `str` name for the new snapshot
-        :param description:  `str` description for the new snapshot
-        :param cleanup: `bool` if True (default) remove the data from local FileSystem after upload
-        :return:
-        """
-        return super(ModelAdapter, self).save_to_snapshot(local_path=local_path, snapshot_name=snapshot_name,
-                                                          description=description, cleanup=cleanup,
-                                                          **kwargs)
-
-    def prepare_trainset(self, data_path, partitions=None, filters=None, **kwargs):
-        """
-        Prepares train set for train.
-        download the specific partition selected to data_path and preforms `self.convert` to the data_path dir
-
-        :param data_path: `str` directory path to use as the root to the data from Dataloop platform
-        :param partitions: `dl.SnapshotPartitionType` or list of partitions, defaults for all partitions
-        :param filters: `dl.Filter` in order to select only part of the data
-        """
-        return super(ModelAdapter, self).prepare_trainset(data_path=data_path, partitions=partitions,
-                                                          filters=filters,
-                                                          **kwargs)
-
-    def predict_items(self, items: list, with_upload=True, cleanup=False, batch_size=16, output_shape=None, **kwargs):
-        """
-        Predicts all items given
-
-        :param items: `List[dl.Item]`
-        :param with_upload: `bool` uploads the predictions back to the given items
-        :param cleanup: `bool` if set removes existing predictions with the same model-snapshot name (default: False)
-        :param batch_size: `int` size of batch to run a single inference
-        :param output_shape: `tuple` (width, height) of resize needed per image
-        :return: `List[Prediction]' `Prediction is set by model.output_type
-        """
-        return super(ModelAdapter, self).predict_items(items=items, with_upload=with_upload,
-                                                       cleanup=cleanup, batch_size=batch_size, output_shape=output_shape,
-                                                       **kwargs)
-
-
-class DlpClassDataset(Dataset):
-
-    def __init__(self, data_path, label_map, transform=None) -> None:
-        """
-        Args:
-            csv_file (string): Path to the csv file with annotations.
-            data_path (string): Directory with all the images (dataloop root dir).
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
-        """
-        self.root_dir = data_path
-        self.transform = transform
-        self.label_map = label_map
-        self.label_to_id = {v: k for k, v in label_map.items()}
-
-        self.image_paths = []
-        self.image_labels = []
-
-        for ann_json in Path(self.root_dir).rglob('*.json'):
-        # for ann_json in glob.glob("{}/json/**/*.json".format(self.root_dir)):
-            dlp_ann = json.load(open(ann_json, 'r'))
-            self.image_paths.append(self.root_dir + '/items/' + dlp_ann['filename'])
-            self.image_labels.append(dlp_ann['annotations'][0]['label'])
-    
-    def __len__(self):
-        return len(self.image_paths)
-
-    def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-
-        img_name = os.path.join(self.root_dir, self.image_paths[idx])
-        # image = io.read_image(img_name)
-        image = Image.open(img_name)
-        label = int(self.label_to_id.get(self.image_labels[idx], -1))
-        if self.transform:
-            image = self.transform(image)
-
-        return image, label
-
-class DlpCropsDataset(Dataset):
-    def __init__(self, data_path, label_map, transform=None) -> None:
-        """generates a torch dataset of all crops on annotaion boxes given from a dataloop directory structure
-
-        Args:
-            data_path (string): path to download folder of images and jsons
-            label_map (dict): dict label: id
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
-        """
-        self.root_dir = data_path
-        self.transform = transform
-        self.label_map = label_map
-        self.label_to_id = {v: k for k, v in label_map.items()}
-
-        self.image_paths = []
-        self.image_crops = []
-        self.image_labels = []
-        for item_json_path in Path(self.root_dir).rglob('*.json'):
-            item_json = json.load(open(item_json_path, 'r'))
-
-            for ann in item_json['annotations']:
-                ann_label = ann['label']
-                ann_crop = [(ann['coordinates'][0]['x'],ann['coordinates'][0]['y']), 
-                            (ann['coordinates'][1]['x'],ann['coordinates'][1]['y']) ]  # [xy, xy]
-
-                self.image_paths.append(self.root_dir + '/items/' + item_json['filename'])
-                self.image_crops.append(ann_crop)
-                self.image_labels.append(ann_label)
-
-    def __len__(self):
-        return len(self.image_paths)
-    
-    def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-
-        img_name = os.path.join(self.root_dir, self.image_paths[idx])
-        # image = io.read_image(img_name)
-        image = Image.open(img_name)
-        crop = image.crop(self.image_crops[idx])
-        label = int(self.label_to_id.get(self.image_labels[idx], -1))
-        if self.transform:
-            image = self.transform(image)
-
-        return crop, label
-    
+        ...
