@@ -8,7 +8,7 @@ import time
 import copy
 import os
 import dtlpy as dl
-from dtlpy.ml.ml_dataset import get_torch_dataset
+from dtlpy.ml.dataset_generators.torch_dataset_generator import DataGenerator
 
 
 class ModelAdapter(dl.BaseModelAdapter):
@@ -116,11 +116,11 @@ class ModelAdapter(dl.BaseModelAdapter):
         ####################
         # Prepare the data #
         ####################
-        train_dataset = get_torch_dataset()(data_path=os.path.join(data_path, 'train'),
+        train_dataset = DataGenerator(data_path=os.path.join(data_path, 'train'),
                                             dataset_entity=self.snapshot.dataset,
                                             annotation_type=dl.AnnotationType.CLASSIFICATION,
                                             transforms=data_transforms['train'])
-        val_dataset = get_torch_dataset()(data_path=os.path.join(data_path, 'validation'),
+        val_dataset = DataGenerator(data_path=os.path.join(data_path, 'validation'),
                                           dataset_entity=self.snapshot.dataset,
                                           annotation_type=dl.AnnotationType.CLASSIFICATION,
                                           transforms=data_transforms['val'])
@@ -275,7 +275,7 @@ def snapshot_creation(model: dl.Model, env: str = 'prod', resnet_ver='50'):
                                gcs_project_name='viewo-main',
                                gcs_bucket_name='model-mgmt-snapshots',
                                gcs_prefix='ResNet{}'.format(resnet_ver))
-    snapshot = model.snapshots.create(snapshot_name='pretrained-resnset{}'.format(resnet_ver),
+    snapshot = model.snapshots.create(snapshot_name='pretrained-resnet{}'.format(resnet_ver),
                                       description='resnset{} pretrained on imagenet'.format(resnet_ver),
                                       tags=['pretrained', 'imagenet'],
                                       dataset_id=None,
