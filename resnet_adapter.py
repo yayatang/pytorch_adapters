@@ -1,6 +1,7 @@
 import json
 import torch
-import torch.nn as nn
+import torch.nn
+import torch.nn.functional
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
@@ -17,7 +18,7 @@ class ModelAdapter(dl.BaseModelAdapter):
     The class bind Dataloop model and snapshot entities with model code implementation
     """
     configuration = {
-        'model_fname': 'my_resnet.pth',
+        'weights_filename': 'my_resnet.pth',
         'input_shape': (299, 299, 3),
     }
 
@@ -40,7 +41,6 @@ class ModelAdapter(dl.BaseModelAdapter):
         :param local_path: `str` directory path in local FileSystem
         """
         weights_filename = self.snapshot.configuration.get('weights_filename', 'model.pth')
-        input_shape = self.snapshot.configuration.get('input_shape', (256, 256))
         classes_filename = self.snapshot.configuration.get('classes_filename', 'classes.json')
         # load classes
         with open(os.path.join(local_path, classes_filename)) as f:
@@ -54,15 +54,6 @@ class ModelAdapter(dl.BaseModelAdapter):
         self.model.eval()
         # How to load the label_map from loaded model
         self.logger.info("Loaded model from {} successfully".format(model_path))
-        # Save the pytorch preprocess
-        self.preprocess = transforms.Compose(
-            [
-                transforms.ToPILImage(),
-                transforms.Resize(input_shape),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ]
-        )
 
     def save(self, local_path, **kwargs):
         """ saves configuration and weights locally
@@ -103,13 +94,13 @@ class ModelAdapter(dl.BaseModelAdapter):
                 transforms.Resize((input_size, input_size)),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
             ]),
             'val': transforms.Compose([
                 transforms.ToPILImage(),
                 transforms.Resize((input_size, input_size)),
                 transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
             ]),
         }
 
@@ -117,13 +108,13 @@ class ModelAdapter(dl.BaseModelAdapter):
         # Prepare the data #
         ####################
         train_dataset = DataGenerator(data_path=os.path.join(data_path, 'train'),
-                                            dataset_entity=self.snapshot.dataset,
-                                            annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                            transforms=data_transforms['train'])
+                                      dataset_entity=self.snapshot.dataset,
+                                      annotation_type=dl.AnnotationType.CLASSIFICATION,
+                                      transforms=data_transforms['train'])
         val_dataset = DataGenerator(data_path=os.path.join(data_path, 'validation'),
-                                          dataset_entity=self.snapshot.dataset,
-                                          annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                          transforms=data_transforms['val'])
+                                    dataset_entity=self.snapshot.dataset,
+                                    annotation_type=dl.AnnotationType.CLASSIFICATION,
+                                    transforms=data_transforms['val'])
 
         dataloaders = {'train': DataLoader(train_dataset, batch_size=batch_size, shuffle=True),
                        'val': DataLoader(val_dataset, batch_size=batch_size, shuffle=True)}
@@ -135,9 +126,9 @@ class ModelAdapter(dl.BaseModelAdapter):
         n_classes = len(train_dataset.id_to_label_map)
         self.logger.info('Setting last layer for {} classes'.format(n_classes))
         num_ftrs = self.model.fc.in_features
-        self.model.fc = nn.Linear(num_ftrs, n_classes)
+        self.model.fc = torch.nn.Linear(num_ftrs, n_classes)
 
-        criterion = nn.CrossEntropyLoss()
+        criterion = torch.nn.CrossEntropyLoss()
         # Observe that all parameters are being optimized
         optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
         # Decay LR by a factor of 0.1 every 7 epochs
@@ -150,7 +141,6 @@ class ModelAdapter(dl.BaseModelAdapter):
         self.model.to(device=self.device)
         for epoch in range(num_epochs):
             self.logger.info('Epoch {}/{}  duration {:1.2f}'.format(epoch, num_epochs - 1, time.time() - epoch_time))
-            self.logger.info('-' * 25)
             epoch_time = time.time()
 
             # Each epoch has a training and validation phase
@@ -215,7 +205,17 @@ class ModelAdapter(dl.BaseModelAdapter):
         :param batch: `np.ndarray`
         :return: `list[dl.AnnotationCollection]` each collection is per each image / item in the batch
         """
-        img_tensors = [self.preprocess(img.astype('uint8')) for img in batch]
+        input_shape = self.snapshot.configuration.get('input_shape', (256, 256))
+        preprocess = transforms.Compose(
+            [
+                transforms.ToPILImage(),
+                transforms.Resize(input_shape),
+                transforms.ToTensor(),
+                # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # [-1, 1]
+            ]
+        )
+        img_tensors = [preprocess(img.astype('uint8')) for img in batch]
         batch_tensor = torch.stack(img_tensors).to(self.device)
         preds_out = self.model(batch_tensor)
         percentages = torch.nn.functional.softmax(preds_out, dim=1)
@@ -247,11 +247,13 @@ class ModelAdapter(dl.BaseModelAdapter):
 
         ...
 
+
 def _get_imagenet_label_json():
     import json
-    with open (os.path.join(os.path.dirname(__file__), 'imagenet_labels_list.json'), 'r') as fh:
+    with open(os.path.join(os.path.dirname(__file__), 'imagenet_labels_list.json'), 'r') as fh:
         labels = json.load(fh)
     return labels
+
 
 def model_creation(env: str = 'prod'):
     dl.setenv(env)
@@ -267,7 +269,8 @@ def model_creation(env: str = 'prod'):
                                   tags=['torch'],
                                   entry_point='resnet_adapter.py')
     return model
-    
+
+
 def snapshot_creation(model: dl.Model, env: str = 'prod', resnet_ver='50'):
     dl.setenv(env)
     project = dl.projects.get('DataloopModels')
@@ -289,9 +292,9 @@ def snapshot_creation(model: dl.Model, env: str = 'prod', resnet_ver='50'):
                                       )
     return snapshot
 
+
 def model_and_snapshot_creation(env: str = 'prod', resnet_ver='50'):
-    model = model_creation(env=env, resnet_ver=resnet_ver)
-    print("Model : {} - {} creatd".format(model.name, model.id))
+    model = model_creation(env=env)
+    print("Model : {} - {} created".format(model.name, model.id))
     snapshot = snapshot_creation(model=model, env=env, resnet_ver=resnet_ver)
-    print("Snapshot : {} - {} creatd".format(snapshot.name, snapshot.id))
-    
+    print("Snapshot : {} - {} created".format(snapshot.name, snapshot.id))
