@@ -1,4 +1,7 @@
 import json
+import logging
+
+import numpy as np
 import torch
 import torch.nn
 import torch.nn.functional
@@ -10,6 +13,8 @@ import copy
 import os
 import dtlpy as dl
 from dtlpy.ml.dataset_generators.torch_dataset_generator import DataGenerator
+
+logger = logging.getLogger('resnet-adapter')
 
 
 class ModelAdapter(dl.BaseModelAdapter):
@@ -48,12 +53,12 @@ class ModelAdapter(dl.BaseModelAdapter):
 
         # load model arch and state
         model_path = os.path.join(local_path, weights_filename)
-        self.logger.info("Loading a model from {}".format(local_path))
+        logger.info("Loading a model from {}".format(local_path))
         self.model = torch.load(model_path)
         self.model.to(self.device)
         self.model.eval()
         # How to load the label_map from loaded model
-        self.logger.info("Loaded model from {} successfully".format(model_path))
+        logger.info("Loaded model from {} successfully".format(model_path))
 
     def save(self, local_path, **kwargs):
         """ saves configuration and weights locally
@@ -110,11 +115,15 @@ class ModelAdapter(dl.BaseModelAdapter):
         train_dataset = DataGenerator(data_path=os.path.join(data_path, 'train'),
                                       dataset_entity=self.snapshot.dataset,
                                       annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                      transforms=data_transforms['train'])
+                                      transforms=data_transforms['train'],
+                                      return_filename=False,
+                                      return_label_string=False)
         val_dataset = DataGenerator(data_path=os.path.join(data_path, 'validation'),
                                     dataset_entity=self.snapshot.dataset,
                                     annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                    transforms=data_transforms['val'])
+                                    transforms=data_transforms['val'],
+                                    return_filename=False,
+                                    return_label_string=False)
 
         dataloaders = {'train': DataLoader(train_dataset, batch_size=batch_size, shuffle=True),
                        'val': DataLoader(val_dataset, batch_size=batch_size, shuffle=True)}
@@ -124,7 +133,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         # prepare model #
         #################
         n_classes = len(train_dataset.id_to_label_map)
-        self.logger.info('Setting last layer for {} classes'.format(n_classes))
+        logger.info('Setting last layer for {} classes'.format(n_classes))
         num_ftrs = self.model.fc.in_features
         self.model.fc = torch.nn.Linear(num_ftrs, n_classes)
 
@@ -137,12 +146,20 @@ class ModelAdapter(dl.BaseModelAdapter):
         since = time.time()
         epoch_time = time.time()
         best_model_wts = copy.deepcopy(self.model.state_dict())
+
+        # early stopping params
+        best_loss = np.inf
         best_acc = 0.0
+        not_improving_epochs = 0
+        patience_epochs = 7
+        end_training = False
+        #####
         self.model.to(device=self.device)
         for epoch in range(num_epochs):
-            self.logger.info('Epoch {}/{}  duration {:1.2f}'.format(epoch, num_epochs - 1, time.time() - epoch_time))
+            if end_training:
+                break
+            logger.info('Epoch {}/{} Start...'.format(epoch, num_epochs))
             epoch_time = time.time()
-
             # Each epoch has a training and validation phase
             for phase in ['train', 'val']:
                 if phase == 'train':
@@ -152,6 +169,7 @@ class ModelAdapter(dl.BaseModelAdapter):
 
                 running_loss = 0.0
                 running_corrects = 0
+                total = 0
 
                 # Iterate over data.
                 for inputs, labels in dataloaders[phase]:
@@ -174,24 +192,34 @@ class ModelAdapter(dl.BaseModelAdapter):
                             optimizer.step()
 
                     # statistics
+                    total += inputs.size(0)
                     running_loss += loss.item() * inputs.size(0)
                     running_corrects += torch.sum(preds == labels.data)
                 if phase == 'train':
                     exp_lr_scheduler.step()
 
-                epoch_loss = running_loss / dataset_sizes[phase]
-                epoch_acc = running_corrects.double() / dataset_sizes[phase]
-
-                self.logger.info('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
-
+                epoch_loss = running_loss / total
+                epoch_acc = running_corrects.double() / total
+                logger.info(
+                    f'Epoch {epoch}/{num_epochs} - {phase} - Loss: {epoch_loss:.4f}, Acc: {epoch_acc:.4f}, Duration {(time.time() - epoch_time):.2f}')
                 # deep copy the model
-                if phase == 'val' and epoch_acc > best_acc:
-                    best_acc = epoch_acc
-                    best_model_wts = copy.deepcopy(self.model.state_dict())
+                if phase == 'val':
+                    if epoch_loss < best_loss:
+                        not_improving_epochs = 0
+                        best_loss = epoch_loss
+                        best_acc = epoch_acc
+                        best_model_wts = copy.deepcopy(self.model.state_dict())
+                        logger.info(
+                            f'Validation loss decreased ({best_loss:.6f} --> {epoch_loss:.6f}).  Saving model ...')
+                    else:
+                        not_improving_epochs += 1
+                    if not_improving_epochs > patience_epochs:
+                        end_training = True
+                        logger.info(f'EarlyStopping counter: {not_improving_epochs} out of {patience_epochs}')
 
         time_elapsed = time.time() - since
-        self.logger.info('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
-        self.logger.info('Best val Acc: {:4f}'.format(best_acc))
+        logger.info('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
+        logger.info('Best val Acc: {:4f}, best loss: {:4f}'.format(best_loss, best_acc))
 
         # load best model weights
         self.model.load_state_dict(best_model_wts)
@@ -229,7 +257,7 @@ class ModelAdapter(dl.BaseModelAdapter):
                                        'confidence': pred_score.item(),
                                        'model_id': self.model_entity.id,
                                        'snapshot_id': self.snapshot.id})
-            self.logger.debug("Predicted {:20} ({:1.3f})".format(pred_label, pred_score))
+            logger.debug("Predicted {:20} ({:1.3f})".format(pred_label, pred_score))
             batch_predictions.append(collection)
         return batch_predictions
 
