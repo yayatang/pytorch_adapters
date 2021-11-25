@@ -1,17 +1,20 @@
-import json
-import logging
-
-import numpy as np
-import torch
-import torch.nn
-import torch.nn.functional
-import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision import transforms
+from imgaug import augmenters as iaa
+import torchvision.transforms
+import torch.nn.functional
+import torch.nn
+import logging
+import torch
+import json
 import time
 import copy
 import os
+import torch.optim as optim
+import imgaug as ia
+import pandas as pd
+import numpy as np
 import dtlpy as dl
+
 from dtlpy.ml.dataset_generators.torch_dataset_generator import DataGenerator
 
 logger = logging.getLogger('resnet-adapter')
@@ -92,23 +95,31 @@ class ModelAdapter(dl.BaseModelAdapter):
         batch_size = configuration.get('batch_size', 64)
         input_size = configuration.get('input_size', 256)
 
+        # sometimes = lambda aug: iaa.Sometimes(0.5, aug)
+        augmentations = iaa.Sequential([
+            iaa.Resize({"height": input_size, "width": input_size}),
+            # iaa.Superpixels(p_replace=(0, 0.5), n_segments=(10, 50)),
+            iaa.flip.Fliplr(p=0.5),
+            iaa.flip.Flipud(p=0.2),
+            iaa.CropAndPad(percent=(-0.11, 0.11), pad_mode=ia.ALL, pad_cval=(0, 255)),
+            # iaa.GaussianBlur(sigma=(0, 1.0)),
+            # iaa.AdditiveGaussianNoise(scale=0.05 * 255),
+        ])
         # DATA TRANSFORMERS
         data_transforms = {
-            'train': transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.Resize((input_size, input_size)),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+            'train': torchvision.transforms.Compose([
+                augmentations,
+                np.copy,
+                torchvision.transforms.ToTensor(),
+                torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
             ]),
-            'val': transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.Resize((input_size, input_size)),
-                transforms.ToTensor(),
-                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+            'val': torchvision.transforms.Compose([
+                torchvision.transforms.ToPILImage(),
+                torchvision.transforms.Resize((input_size, input_size)),
+                torchvision.transforms.ToTensor(),
+                torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
             ]),
         }
-
         ####################
         # Prepare the data #
         ####################
@@ -116,19 +127,17 @@ class ModelAdapter(dl.BaseModelAdapter):
                                       dataset_entity=self.snapshot.dataset,
                                       annotation_type=dl.AnnotationType.CLASSIFICATION,
                                       transforms=data_transforms['train'],
-                                      return_filename=False,
-                                      return_label_string=False)
+                                      class_balancing=True)
         val_dataset = DataGenerator(data_path=os.path.join(data_path, 'validation'),
                                     dataset_entity=self.snapshot.dataset,
                                     annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                    transforms=data_transforms['val'],
-                                    return_filename=False,
-                                    return_label_string=False)
-
-        dataloaders = {'train': DataLoader(train_dataset, batch_size=batch_size, shuffle=True),
-                       'val': DataLoader(val_dataset, batch_size=batch_size, shuffle=True)}
-        dataset_sizes = {phase: len(dataloaders[phase]) for phase in ['train', 'val']}
-
+                                    transforms=data_transforms['val'])
+        dataloaders = {'train': DataLoader(train_dataset,
+                                           batch_size=batch_size,
+                                           shuffle=True),
+                       'val': DataLoader(val_dataset,
+                                         batch_size=batch_size,
+                                         shuffle=True)}
         #################
         # prepare model #
         #################
@@ -141,10 +150,9 @@ class ModelAdapter(dl.BaseModelAdapter):
         # Observe that all parameters are being optimized
         optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
         # Decay LR by a factor of 0.1 every 7 epochs
-        exp_lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+        exp_lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
 
         since = time.time()
-        epoch_time = time.time()
         best_model_wts = copy.deepcopy(self.model.state_dict())
 
         # early stopping params
@@ -153,6 +161,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         not_improving_epochs = 0
         patience_epochs = 7
         end_training = False
+        self.metrics = {'history': list()}
         #####
         self.model.to(device=self.device)
         for epoch in range(num_epochs):
@@ -172,10 +181,9 @@ class ModelAdapter(dl.BaseModelAdapter):
                 total = 0
 
                 # Iterate over data.
-                for inputs, labels in dataloaders[phase]:
-                    inputs = inputs.to(self.device)
-                    labels = labels.to(self.device).long()
-
+                for batch in dataloaders[phase]:
+                    inputs = torch.stack(tuple(batch['image']), 0).to(self.device)
+                    labels = torch.stack(tuple(batch['annotations']), 0).to(self.device).long().squeeze()
                     # zero the parameter gradients
                     optimizer.zero_grad()
 
@@ -199,10 +207,14 @@ class ModelAdapter(dl.BaseModelAdapter):
                     exp_lr_scheduler.step()
 
                 epoch_loss = running_loss / total
-                epoch_acc = running_corrects.double() / total
+                epoch_acc = running_corrects.item() / total
                 logger.info(
                     f'Epoch {epoch}/{num_epochs} - {phase} - Loss: {epoch_loss:.4f}, Acc: {epoch_acc:.4f}, Duration {(time.time() - epoch_time):.2f}')
                 # deep copy the model
+                self.metrics['history'].append({'phase': phase,
+                                                'epoch': epoch,
+                                                'loss': epoch_loss,
+                                                'acc': epoch_acc})
                 if phase == 'val':
                     if epoch_loss < best_loss:
                         not_improving_epochs = 0
@@ -216,14 +228,77 @@ class ModelAdapter(dl.BaseModelAdapter):
                     if not_improving_epochs > patience_epochs:
                         end_training = True
                         logger.info(f'EarlyStopping counter: {not_improving_epochs} out of {patience_epochs}')
+                ###############
+                # save debugs #
+                ###############
 
         time_elapsed = time.time() - since
         logger.info('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
-        logger.info('Best val Acc: {:4f}, best loss: {:4f}'.format(best_loss, best_acc))
+        logger.info('Best val loss: {:4f}, best acc: {:4f}'.format(best_loss, best_acc))
 
         # load best model weights
         self.model.load_state_dict(best_model_wts)
         self.label_map = train_dataset.id_to_label_map
+
+        #############
+        # Confusion #
+        #############
+        self.metrics['confusion'] = dict()
+        y_true_total = list()
+        y_pred_total = list()
+        labels = list(self.label_map.values())
+        confusion_dict = dict()
+        for phase in ['train', 'val']:
+            y_true = list()
+            y_pred = list()
+            filepaths = list()
+            for batch in dataloaders[phase]:
+                xs = torch.stack(tuple(batch['image']), 0).to(self.device)
+                ys = torch.stack(tuple(batch['annotations']), 0).to(self.device).long().squeeze()
+                y_true.extend([self.label_map[int(y)] for y in ys])
+                with torch.set_grad_enabled(False):
+                    outputs = self.model(xs)
+                    _, preds = torch.max(outputs, 1)
+                y_pred.extend([self.label_map[int(l)] for l in preds])
+                filepaths.extend(batch['image_filepath'])
+            for t, p, file in zip(y_true, y_pred, filepaths):
+                if t not in confusion_dict:
+                    confusion_dict[t] = dict()
+                if p not in confusion_dict[t]:
+                    confusion_dict[t][p] = list()
+                confusion_dict[t][p].append(file)
+            s_true = pd.Series(y_true, name='Actual')
+            s_pred = pd.Series(y_pred, name='Predicted')
+            self.metrics['confusion'][phase] = pd.crosstab(s_true, s_pred).reindex(columns=labels,
+                                                                                   index=labels,
+                                                                                   fill_value=0)
+            y_true_total.extend(y_true)
+            y_pred_total.extend(y_pred)
+        s_true = pd.Series(y_true_total, name='Actual')
+        s_pred = pd.Series(y_pred_total, name='Predicted')
+        self.metrics['confusion']['overall'] = pd.crosstab(s_true, s_pred).reindex(columns=labels,
+                                                                                   index=labels,
+                                                                                   fill_value=0)
+
+    # def debug(self):
+    #     import matplotlib.pyplot as plt
+    #     if idx is None:
+    #         idx = np.random.randint(self.__len__())
+    #     data_item = train_dataset.__getitem__(idx)
+    #     image = data_item.get('image')
+    #     labels = data_item.get('labels')
+    #     targets = data_item.get('annotations')
+    #     annotations = train_dataset._to_dtlpy(targets=targets, labels=labels)
+    #     marked_image = annotations.show(image=image,
+    #                                     height=image.shape[0],
+    #                                     width=image.shape[1],
+    #                                     # alpha=0.8,
+    #                                     with_text=False)
+    #     if plot:
+    #         plt.figure()
+    #         plt.imshow(marked_image)
+    #     if return_output:
+    #         return marked_image, annotations
 
     def predict(self, batch, **kwargs):
         """ Model inference (predictions) on batch of images
@@ -234,13 +309,12 @@ class ModelAdapter(dl.BaseModelAdapter):
         :return: `list[dl.AnnotationCollection]` each collection is per each image / item in the batch
         """
         input_shape = self.snapshot.configuration.get('input_shape', (256, 256))
-        preprocess = transforms.Compose(
+        preprocess = torchvision.transforms.Compose(
             [
-                transforms.ToPILImage(),
-                transforms.Resize(input_shape),
-                transforms.ToTensor(),
-                # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # [-1, 1]
+                torchvision.transforms.ToPILImage(),
+                torchvision.transforms.Resize(input_shape),
+                torchvision.transforms.ToTensor(),
+                torchvision.transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # [-1, 1]
             ]
         )
         img_tensors = [preprocess(img.astype('uint8')) for img in batch]
