@@ -183,8 +183,7 @@ class ModelAdapter(dl.BaseModelAdapter):
 
                 # Iterate over data.
                 with tqdm.tqdm(dataloaders[phase], unit="batch") as tepoch:
-
-                    for batch in dataloaders[phase]:
+                    for batch in tepoch:
                         inputs = torch.stack(tuple(batch['image']), 0).to(self.device)
                         labels = torch.stack(tuple(batch['annotations']), 0).to(self.device).long().squeeze()
                         # zero the parameter gradients
