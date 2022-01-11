@@ -8,6 +8,7 @@ import torch
 import json
 import time
 import copy
+import tqdm
 import os
 import torch.optim as optim
 import imgaug as ia
@@ -181,33 +182,37 @@ class ModelAdapter(dl.BaseModelAdapter):
                 total = 0
 
                 # Iterate over data.
-                for batch in dataloaders[phase]:
-                    inputs = torch.stack(tuple(batch['image']), 0).to(self.device)
-                    labels = torch.stack(tuple(batch['annotations']), 0).to(self.device).long().squeeze()
-                    # zero the parameter gradients
-                    optimizer.zero_grad()
+                with tqdm.tqdm(dataloaders[phase], unit="batch") as tepoch:
 
-                    # forward
-                    # track history if only in train
-                    with torch.set_grad_enabled(phase == 'train'):
-                        outputs = self.model(inputs)
-                        _, preds = torch.max(outputs, 1)
-                        loss = criterion(outputs, labels)
+                    for batch in dataloaders[phase]:
+                        inputs = torch.stack(tuple(batch['image']), 0).to(self.device)
+                        labels = torch.stack(tuple(batch['annotations']), 0).to(self.device).long().squeeze()
+                        # zero the parameter gradients
+                        optimizer.zero_grad()
 
-                        # backward + optimize only if in training phase
-                        if phase == 'train':
-                            loss.backward()
-                            optimizer.step()
+                        # forward
+                        # track history if only in train
+                        with torch.set_grad_enabled(phase == 'train'):
+                            outputs = self.model(inputs)
+                            _, preds = torch.max(outputs, 1)
+                            loss = criterion(outputs, labels)
 
-                    # statistics
-                    total += inputs.size(0)
-                    running_loss += loss.item() * inputs.size(0)
-                    running_corrects += torch.sum(preds == labels.data)
+                            # backward + optimize only if in training phase
+                            if phase == 'train':
+                                loss.backward()
+                                optimizer.step()
+
+                        # statistics
+                        total += inputs.size(0)
+                        running_loss += (loss.item() * inputs.size(0))
+                        running_corrects += torch.sum(preds == labels.data).double().cpu().numpy()
+                        epoch_acc = running_corrects / total
+                        epoch_loss = running_loss / total
+                        tepoch.set_postfix(loss=epoch_loss, accuracy=100. * epoch_acc)
+
                 if phase == 'train':
                     exp_lr_scheduler.step()
 
-                epoch_loss = running_loss / total
-                epoch_acc = running_corrects.item() / total
                 logger.info(
                     f'Epoch {epoch}/{num_epochs} - {phase} - Loss: {epoch_loss:.4f}, Acc: {epoch_acc:.4f}, Duration {(time.time() - epoch_time):.2f}')
                 # deep copy the model
