@@ -16,7 +16,8 @@ import pandas as pd
 import numpy as np
 import dtlpy as dl
 
-from dtlpy.ml.dataset_generators.torch_dataset_generator import DataGenerator
+from dtlpy.utilities.dataset_generators.dataset_generator import collate_torch
+from dtlpy.utilities.dataset_generators.dataset_generator_torch import DatasetGeneratorTorch
 
 logger = logging.getLogger('resnet-adapter')
 
@@ -97,42 +98,45 @@ class ModelAdapter(dl.BaseModelAdapter):
         input_size = configuration.get('input_size', 256)
 
         # sometimes = lambda aug: iaa.Sometimes(0.5, aug)
-        augmentations = iaa.Sequential([
+        # DATA TRANSFORMERS
+        data_transforms = {
+            'train': torchvision.transforms.Compose([
             iaa.Resize({"height": input_size, "width": input_size}),
             # iaa.Superpixels(p_replace=(0, 0.5), n_segments=(10, 50)),
             iaa.flip.Fliplr(p=0.5),
             iaa.flip.Flipud(p=0.2),
             iaa.CropAndPad(percent=(-0.11, 0.11), pad_mode=ia.ALL, pad_cval=(0, 255)),
-            # iaa.GaussianBlur(sigma=(0, 1.0)),
-            # iaa.AdditiveGaussianNoise(scale=0.05 * 255),
-        ])
-        # DATA TRANSFORMERS
-        data_transforms = {
-            'train': torchvision.transforms.Compose([
-                augmentations,
-                np.copy,
+                            np.copy,
                 torchvision.transforms.ToTensor(),
                 torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
             ]),
-            'val': torchvision.transforms.Compose([
-                torchvision.transforms.ToPILImage(),
-                torchvision.transforms.Resize((input_size, input_size)),
-                torchvision.transforms.ToTensor(),
-                torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-            ]),
+            # 'val': torchvision.transforms.Compose([
+            #     torchvision.transforms.ToPILImage(),
+            #     torchvision.transforms.Resize((input_size, input_size)),
+            #     torchvision.transforms.ToTensor(),
+            #     torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+            # ])
+            'val': [torchvision.transforms.ToPILImage(),
+                    torchvision.transforms.Resize((input_size, input_size)),
+                    torchvision.transforms.ToTensor(),
+                    torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])]
+
         }
+
         ####################
         # Prepare the data #
         ####################
-        train_dataset = DataGenerator(data_path=os.path.join(data_path, 'train'),
+        train_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'train'),
                                       dataset_entity=self.snapshot.dataset,
                                       annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                      transforms=data_transforms['train'],
-                                      class_balancing=True)
-        val_dataset = DataGenerator(data_path=os.path.join(data_path, 'validation'),
+                                      transforms=data_transforms['val'],
+                                      class_balancing=False,
+                                      )
+        val_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'validation'),
                                     dataset_entity=self.snapshot.dataset,
                                     annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                    transforms=data_transforms['val'])
+                                    transforms=data_transforms['val'],
+                                    )
         dataloaders = {'train': DataLoader(train_dataset,
                                            batch_size=batch_size,
                                            shuffle=True),
@@ -378,9 +382,9 @@ def model_creation(env: str = 'prod'):
     return model
 
 
-def snapshot_creation(model: dl.Model, env: str = 'prod', resnet_ver='50'):
+def snapshot_creation(project_name, model: dl.Model, env: str = 'prod', resnet_ver='50'):
     dl.setenv(env)
-    project = dl.projects.get('DataloopModels')
+    project = dl.projects.get(project_name)
     bucket = dl.buckets.create(dl.BucketType.GCS,
                                gcs_project_name='viewo-main',
                                gcs_bucket_name='model-mgmt-snapshots',
@@ -403,5 +407,5 @@ def snapshot_creation(model: dl.Model, env: str = 'prod', resnet_ver='50'):
 def model_and_snapshot_creation(env: str = 'prod', resnet_ver='50'):
     model = model_creation(env=env)
     print("Model : {} - {} created".format(model.name, model.id))
-    snapshot = snapshot_creation(model=model, env=env, resnet_ver=resnet_ver)
+    snapshot = snapshot_creation(project_name, model=model, env=env, resnet_ver=resnet_ver)
     print("Snapshot : {} - {} created".format(snapshot.name, snapshot.id))
