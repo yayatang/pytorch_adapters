@@ -130,13 +130,20 @@ class ModelAdapter(dl.BaseModelAdapter):
                                       dataset_entity=self.snapshot.dataset,
                                       annotation_type=dl.AnnotationType.CLASSIFICATION,
                                       transforms=data_transforms['val'],
+                                      id_to_label_map=self.snapshot.configuration['id_to_label_map'],
                                       class_balancing=False,
+                                    #   to_categorical=True,
+                                    #   collate_fn=collate_torch
                                       )
         val_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'validation'),
                                     dataset_entity=self.snapshot.dataset,
                                     annotation_type=dl.AnnotationType.CLASSIFICATION,
                                     transforms=data_transforms['val'],
+                                    id_to_label_map=self.snapshot.configuration['id_to_label_map'],
+                                    # to_categorical=True,
+                                    # collate_fn=collate_torch
                                     )
+
         dataloaders = {'train': DataLoader(train_dataset,
                                            batch_size=batch_size,
                                            shuffle=True),
