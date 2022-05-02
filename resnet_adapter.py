@@ -27,10 +27,6 @@ class ModelAdapter(dl.BaseModelAdapter):
     resnet Model adapter using pytorch.
     The class bind Dataloop model and snapshot entities with model code implementation
     """
-    configuration = {
-        'weights_filename': 'my_resnet.pth',
-        'input_shape': (299, 299, 3),
-    }
 
     def __init__(self, model_entity):
         super(ModelAdapter, self).__init__(model_entity)
@@ -101,12 +97,12 @@ class ModelAdapter(dl.BaseModelAdapter):
         # DATA TRANSFORMERS
         data_transforms = {
             'train': torchvision.transforms.Compose([
-            iaa.Resize({"height": input_size, "width": input_size}),
-            # iaa.Superpixels(p_replace=(0, 0.5), n_segments=(10, 50)),
-            iaa.flip.Fliplr(p=0.5),
-            iaa.flip.Flipud(p=0.2),
-            iaa.CropAndPad(percent=(-0.11, 0.11), pad_mode=ia.ALL, pad_cval=(0, 255)),
-                            np.copy,
+                iaa.Resize({"height": input_size, "width": input_size}),
+                # iaa.Superpixels(p_replace=(0, 0.5), n_segments=(10, 50)),
+                iaa.flip.Fliplr(p=0.5),
+                iaa.flip.Flipud(p=0.2),
+                iaa.CropAndPad(percent=(-0.11, 0.11), pad_mode=ia.ALL, pad_cval=(0, 255)),
+                np.copy,
                 torchvision.transforms.ToTensor(),
                 torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
             ]),
@@ -127,22 +123,22 @@ class ModelAdapter(dl.BaseModelAdapter):
         # Prepare the data #
         ####################
         train_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'train'),
-                                      dataset_entity=self.snapshot.dataset,
-                                      annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                      transforms=data_transforms['val'],
-                                      id_to_label_map=self.snapshot.configuration['id_to_label_map'],
-                                      class_balancing=False,
-                                    #   to_categorical=True,
-                                    #   collate_fn=collate_torch
-                                      )
+                                              dataset_entity=self.snapshot.dataset,
+                                              annotation_type=dl.AnnotationType.CLASSIFICATION,
+                                              transforms=data_transforms['val'],
+                                              id_to_label_map=self.snapshot.configuration['id_to_label_map'],
+                                              class_balancing=False,
+                                              #   to_categorical=True,
+                                              #   collate_fn=collate_torch
+                                              )
         val_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'validation'),
-                                    dataset_entity=self.snapshot.dataset,
-                                    annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                    transforms=data_transforms['val'],
-                                    id_to_label_map=self.snapshot.configuration['id_to_label_map'],
-                                    # to_categorical=True,
-                                    # collate_fn=collate_torch
-                                    )
+                                            dataset_entity=self.snapshot.dataset,
+                                            annotation_type=dl.AnnotationType.CLASSIFICATION,
+                                            transforms=data_transforms['val'],
+                                            id_to_label_map=self.snapshot.configuration['id_to_label_map'],
+                                            # to_categorical=True,
+                                            # collate_fn=collate_torch
+                                            )
 
         dataloaders = {'train': DataLoader(train_dataset,
                                            batch_size=batch_size,
@@ -324,11 +320,11 @@ class ModelAdapter(dl.BaseModelAdapter):
         :param batch: `np.ndarray`
         :return: `list[dl.AnnotationCollection]` each collection is per each image / item in the batch
         """
-        input_shape = self.snapshot.configuration.get('input_shape', (256, 256))
+        input_size = self.snapshot.configuration.get('input_size', 256)
         preprocess = torchvision.transforms.Compose(
             [
                 torchvision.transforms.ToPILImage(),
-                torchvision.transforms.Resize(input_shape),
+                torchvision.transforms.Resize(input_size),
                 torchvision.transforms.ToTensor(),
                 torchvision.transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # [-1, 1]
             ]
@@ -368,7 +364,7 @@ class ModelAdapter(dl.BaseModelAdapter):
 
 def _get_imagenet_label_json():
     import json
-    with open(os.path.join(os.path.dirname(__file__), 'imagenet_labels_list.json'), 'r') as fh:
+    with open('imagenet_labels_list.json', 'r') as fh:
         labels = json.load(fh)
     return labels
 
@@ -385,6 +381,10 @@ def model_creation(env: str = 'prod'):
                                   is_global=True,
                                   codebase=codebase,
                                   tags=['torch'],
+                                  default_configuration={
+                                      'weights_filename': 'model.pth',
+                                      'input_size': 256,
+                                  },
                                   entry_point='resnet_adapter.py')
     return model
 
