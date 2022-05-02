@@ -27,6 +27,10 @@ class ModelAdapter(dl.BaseModelAdapter):
     resnet Model adapter using pytorch.
     The class bind Dataloop model and snapshot entities with model code implementation
     """
+    configuration = {
+        'weights_filename': 'model.pth',
+        'input_size': 256,
+    }
 
     def __init__(self, model_entity):
         super(ModelAdapter, self).__init__(model_entity)
