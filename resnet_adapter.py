@@ -1,3 +1,4 @@
+import cv2
 from torch.utils.data import DataLoader
 from imgaug import augmenters as iaa
 import torchvision.transforms
@@ -99,14 +100,18 @@ class ModelAdapter(dl.BaseModelAdapter):
 
         # sometimes = lambda aug: iaa.Sometimes(0.5, aug)
         # DATA TRANSFORMERS
+        def gray_to_rgb(x):
+            return x.convert('RGB')
+
         data_transforms = {
             'train': torchvision.transforms.Compose([
-            iaa.Resize({"height": input_size, "width": input_size}),
-            # iaa.Superpixels(p_replace=(0, 0.5), n_segments=(10, 50)),
-            iaa.flip.Fliplr(p=0.5),
-            iaa.flip.Flipud(p=0.2),
-            iaa.CropAndPad(percent=(-0.11, 0.11), pad_mode=ia.ALL, pad_cval=(0, 255)),
-                            np.copy,
+                iaa.Resize({"height": input_size, "width": input_size}),
+                # iaa.Superpixels(p_replace=(0, 0.5), n_segments=(10, 50)),
+                iaa.flip.Fliplr(p=0.5),
+                iaa.flip.Flipud(p=0.2),
+                iaa.CropAndPad(percent=(-0.11, 0.11), pad_mode=ia.ALL, pad_cval=(0, 255)),
+                torchvision.transforms.ToPILImage(),
+                gray_to_rgb,
                 torchvision.transforms.ToTensor(),
                 torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
             ]),
@@ -117,6 +122,7 @@ class ModelAdapter(dl.BaseModelAdapter):
             #     torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
             # ])
             'val': [torchvision.transforms.ToPILImage(),
+                    gray_to_rgb,
                     torchvision.transforms.Resize((input_size, input_size)),
                     torchvision.transforms.ToTensor(),
                     torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])]
@@ -127,28 +133,32 @@ class ModelAdapter(dl.BaseModelAdapter):
         # Prepare the data #
         ####################
         train_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'train'),
-                                      dataset_entity=self.snapshot.dataset,
-                                      annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                      transforms=data_transforms['val'],
-                                      id_to_label_map=self.snapshot.configuration['id_to_label_map'],
-                                      class_balancing=False,
-                                    #   to_categorical=True,
-                                    #   collate_fn=collate_torch
-                                      )
+                                              dataset_entity=self.snapshot.dataset,
+                                              annotation_type=dl.AnnotationType.CLASSIFICATION,
+                                              transforms=data_transforms['val'],
+                                              id_to_label_map=self.snapshot.configuration['id_to_label_map'],
+                                              class_balancing=False,
+                                              # batch_size=16,
+                                              # collate_fn=collate_torch
+                                              #   to_categorical=True,
+                                              )
         val_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'validation'),
-                                    dataset_entity=self.snapshot.dataset,
-                                    annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                    transforms=data_transforms['val'],
-                                    id_to_label_map=self.snapshot.configuration['id_to_label_map'],
-                                    # to_categorical=True,
-                                    # collate_fn=collate_torch
-                                    )
+                                            dataset_entity=self.snapshot.dataset,
+                                            annotation_type=dl.AnnotationType.CLASSIFICATION,
+                                            transforms=data_transforms['val'],
+                                            id_to_label_map=self.snapshot.configuration['id_to_label_map'],
+                                            # batch_size=16,
+                                            # to_categorical=True,
+                                            # collate_fn=collate_torch
+                                            )
 
         dataloaders = {'train': DataLoader(train_dataset,
                                            batch_size=batch_size,
-                                           shuffle=True),
+                                           shuffle=True,
+                                           collate_fn=collate_torch),
                        'val': DataLoader(val_dataset,
                                          batch_size=batch_size,
+                                         collate_fn=collate_torch,
                                          shuffle=True)}
         #################
         # prepare model #
