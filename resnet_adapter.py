@@ -3,14 +3,12 @@ from imgaug import augmenters as iaa
 import torchvision.transforms
 import torch.optim as optim
 import torch.nn.functional
-import imgaug as ia
 import pandas as pd
 import numpy as np
 import dtlpy as dl
 import torch.nn
 import logging
 import torch
-import json
 import time
 import copy
 import tqdm
@@ -31,12 +29,7 @@ class ModelAdapter(dl.BaseModelAdapter):
     def __init__(self, model_entity):
         super(ModelAdapter, self).__init__(model_entity)
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.label_map = {}
 
-    # ===============================
-    # NEED TO IMPLEMENT THESE METHODS
-    # ===============================
-    # READ: https://pytorch.org/tutorials/beginner/saving_loading_models.html
     def load(self, local_path, **kwargs):
         """ Loads model and populates self.model with a `runnable` model
 
@@ -47,11 +40,6 @@ class ModelAdapter(dl.BaseModelAdapter):
         :param local_path: `str` directory path in local FileSystem
         """
         weights_filename = self.snapshot.configuration.get('weights_filename', 'model.pth')
-        classes_filename = self.snapshot.configuration.get('classes_filename', 'classes.json')
-        # load classes
-        with open(os.path.join(local_path, classes_filename)) as f:
-            self.label_map = json.load(f)
-
         # load model arch and state
         model_path = os.path.join(local_path, weights_filename)
         logger.info("Loading a model from {}".format(local_path))
@@ -72,8 +60,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         """
         weights_filename = kwargs.get('weights_filename', 'model.pth')
         torch.save(self.model, os.path.join(local_path, weights_filename))
-        self.snapshot.configuration['weights_filename'] = weights_filename
-        self.snapshot.update()
+        self.configuration['weights_filename'] = weights_filename
 
     def train(self, data_path, output_path, **kwargs):
         """ Train the model according to data in local_path and save the snapshot to dump_path
@@ -82,10 +69,9 @@ class ModelAdapter(dl.BaseModelAdapter):
         :param data_path: `str` local File System path to where the data was downloaded and converted at
         :param output_path: `str` local File System path where to dump training mid-results (checkpoints, logs...)
         """
-        configuration = self.configuration
-        num_epochs = configuration.get('num_epochs', 10)
-        batch_size = configuration.get('batch_size', 64)
-        input_size = configuration.get('input_size', 256)
+        num_epochs = self.configuration.get('num_epochs', 10)
+        batch_size = self.configuration.get('batch_size', 64)
+        input_size = self.configuration.get('input_size', 256)
 
         # sometimes = lambda aug: iaa.Sometimes(0.5, aug)
         # DATA TRANSFORMERS
@@ -239,7 +225,6 @@ class ModelAdapter(dl.BaseModelAdapter):
 
         # load best model weights
         self.model.load_state_dict(best_model_wts)
-        self.label_map = train_dataset.id_to_label_map
 
         #############
         # Confusion #
@@ -247,7 +232,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         self.metrics['confusion'] = dict()
         y_true_total = list()
         y_pred_total = list()
-        labels = list(self.label_map.values())
+        labels = list(train_dataset.id_to_label_map.values())
         confusion_dict = dict()
         for phase in ['train', 'val']:
             y_true = list()
@@ -256,11 +241,11 @@ class ModelAdapter(dl.BaseModelAdapter):
             for batch in dataloaders[phase]:
                 xs = torch.stack(tuple(batch['image']), 0).to(self.device)
                 ys = torch.stack(tuple(batch['annotations']), 0).to(self.device).long().squeeze()
-                y_true.extend([self.label_map[int(y)] for y in ys])
+                y_true.extend([train_dataset.id_to_label_map[int(y)] for y in ys])
                 with torch.set_grad_enabled(False):
                     outputs = self.model(xs)
                     _, preds = torch.max(outputs, 1)
-                y_pred.extend([self.label_map[int(l)] for l in preds])
+                y_pred.extend([train_dataset.id_to_label_map[int(l)] for l in preds])
                 filepaths.extend(batch['image_filepath'])
             for t, p, file in zip(y_true, y_pred, filepaths):
                 if t not in confusion_dict:
@@ -281,26 +266,6 @@ class ModelAdapter(dl.BaseModelAdapter):
                                                                                    index=labels,
                                                                                    fill_value=0)
 
-    # def debug(self):
-    #     import matplotlib.pyplot as plt
-    #     if idx is None:
-    #         idx = np.random.randint(self.__len__())
-    #     data_item = train_dataset.__getitem__(idx)
-    #     image = data_item.get('image')
-    #     labels = data_item.get('labels')
-    #     targets = data_item.get('annotations')
-    #     annotations = train_dataset._to_dtlpy(targets=targets, labels=labels)
-    #     marked_image = annotations.show(image=image,
-    #                                     height=image.shape[0],
-    #                                     width=image.shape[1],
-    #                                     # alpha=0.8,
-    #                                     with_text=False)
-    #     if plot:
-    #         plt.figure()
-    #         plt.imshow(marked_image)
-    #     if return_output:
-    #         return marked_image, annotations
-
     def predict(self, batch, **kwargs):
         """ Model inference (predictions) on batch of images
 
@@ -309,7 +274,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         :param batch: `np.ndarray`
         :return: `list[dl.AnnotationCollection]` each collection is per each image / item in the batch
         """
-        input_size = self.snapshot.configuration.get('input_size', 256)
+        input_size = self.configuration.get('input_size', 256)
         preprocess = torchvision.transforms.Compose(
             [
                 torchvision.transforms.ToPILImage(),
@@ -320,12 +285,12 @@ class ModelAdapter(dl.BaseModelAdapter):
         )
         img_tensors = [preprocess(img.astype('uint8')) for img in batch]
         batch_tensor = torch.stack(img_tensors).to(self.device)
-        preds_out = self.model(batch_tensor)
-        percentages = torch.nn.functional.softmax(preds_out, dim=1)
-        batch_predictions = list()
-        for img_pred in percentages:
-            pred_score, high_pred_index = torch.max(img_pred, 0)
-            pred_label = self.label_map.get(str(high_pred_index.item()), 'UNKNOWN')
+        batch_output = self.model(batch_tensor)
+        batch_predictions = torch.nn.functional.softmax(batch_output, dim=1)
+        batch_annotations = list()
+        for img_prediction in batch_predictions:
+            pred_score, high_pred_index = torch.max(img_prediction, 0)
+            pred_label = self.snapshot.id_to_label_map.get(str(high_pred_index.item()), 'UNKNOWN')
             collection = dl.AnnotationCollection()
             collection.add(annotation_definition=dl.Classification(label=pred_label),
                            model_info={'name': self.model_entity.name,
