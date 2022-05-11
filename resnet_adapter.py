@@ -114,12 +114,6 @@ class ModelAdapter(dl.BaseModelAdapter):
                 torchvision.transforms.ToTensor(),
                 torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
             ]),
-            # 'val': torchvision.transforms.Compose([
-            #     torchvision.transforms.ToPILImage(),
-            #     torchvision.transforms.Resize((input_size, input_size)),
-            #     torchvision.transforms.ToTensor(),
-            #     torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-            # ])
             'val': [torchvision.transforms.ToPILImage(),
                     gray_to_rgb,
                     torchvision.transforms.Resize((input_size, input_size)),
