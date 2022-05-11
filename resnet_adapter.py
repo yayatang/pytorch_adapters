@@ -358,9 +358,9 @@ def _get_imagenet_label_json():
     return labels
 
 
-def model_creation(env: str = 'prod'):
+def model_creation(project_name, env: str = 'prod'):
     dl.setenv(env)
-    project = dl.projects.get('DataloopModels')
+    project = dl.projects.get(project_name)
 
     codebase = dl.GitCodebase(git_url='https://github.com/dataloop-ai/pytorch_adapters',
                               git_tag='master')
@@ -400,8 +400,8 @@ def snapshot_creation(project_name, model: dl.Model, env: str = 'prod', resnet_v
     return snapshot
 
 
-def model_and_snapshot_creation(env: str = 'prod', resnet_ver='50'):
-    model = model_creation(env=env)
+def model_and_snapshot_creation(project_name, env: str = 'prod', resnet_ver='50'):
+    model = model_creation(project_name, env=env)
     print("Model : {} - {} created".format(model.name, model.id))
     snapshot = snapshot_creation(project_name, model=model, env=env, resnet_ver=resnet_ver)
     print("Snapshot : {} - {} created".format(snapshot.name, snapshot.id))
