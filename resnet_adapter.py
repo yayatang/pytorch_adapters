@@ -1,7 +1,12 @@
 from torch.utils.data import DataLoader
 from imgaug import augmenters as iaa
 import torchvision.transforms
+import torch.optim as optim
 import torch.nn.functional
+import imgaug as ia
+import pandas as pd
+import numpy as np
+import dtlpy as dl
 import torch.nn
 import logging
 import torch
@@ -10,11 +15,6 @@ import time
 import copy
 import tqdm
 import os
-import torch.optim as optim
-import imgaug as ia
-import pandas as pd
-import numpy as np
-import dtlpy as dl
 
 from dtlpy.utilities.dataset_generators.dataset_generator import collate_torch
 from dtlpy.utilities.dataset_generators.dataset_generator_torch import DatasetGeneratorTorch
@@ -116,26 +116,24 @@ class ModelAdapter(dl.BaseModelAdapter):
         train_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'train'),
                                               dataset_entity=self.snapshot.dataset,
                                               annotation_type=dl.AnnotationType.CLASSIFICATION,
-                                              transforms=data_transforms['val'],
+                                              transforms=data_transforms['train'],
                                               id_to_label_map=self.snapshot.configuration['id_to_label_map'],
-                                              class_balancing=False,
-                                              #   to_categorical=True,
-                                              #   collate_fn=collate_torch
+                                              class_balancing=False
                                               )
         val_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'validation'),
                                             dataset_entity=self.snapshot.dataset,
                                             annotation_type=dl.AnnotationType.CLASSIFICATION,
                                             transforms=data_transforms['val'],
                                             id_to_label_map=self.snapshot.configuration['id_to_label_map'],
-                                            # to_categorical=True,
-                                            # collate_fn=collate_torch
                                             )
 
         dataloaders = {'train': DataLoader(train_dataset,
                                            batch_size=batch_size,
-                                           shuffle=True),
+                                           shuffle=True,
+                                           collate_fn=collate_torch),
                        'val': DataLoader(val_dataset,
                                          batch_size=batch_size,
+                                         collate_fn=collate_torch,
                                          shuffle=True)}
         #################
         # prepare model #
