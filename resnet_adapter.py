@@ -27,10 +27,6 @@ class ModelAdapter(dl.BaseModelAdapter):
     resnet Model adapter using pytorch.
     The class bind Dataloop model and snapshot entities with model code implementation
     """
-    configuration = {
-        'weights_filename': 'model.pth',
-        'input_size': 256,
-    }
 
     def __init__(self, model_entity):
         super(ModelAdapter, self).__init__(model_entity)
@@ -75,13 +71,8 @@ class ModelAdapter(dl.BaseModelAdapter):
         :param local_path: `str` directory path in local FileSystem
         """
         weights_filename = kwargs.get('weights_filename', 'model.pth')
-        classes_filename = kwargs.get('classes_filename', 'classes.json')
-
         torch.save(self.model, os.path.join(local_path, weights_filename))
-        with open(os.path.join(local_path, classes_filename), 'w') as f:
-            json.dump(self.label_map, f)
         self.snapshot.configuration['weights_filename'] = weights_filename
-        self.snapshot.configuration['label_map'] = self.label_map
         self.snapshot.update()
 
     def train(self, data_path, output_path, **kwargs):
@@ -92,31 +83,27 @@ class ModelAdapter(dl.BaseModelAdapter):
         :param output_path: `str` local File System path where to dump training mid-results (checkpoints, logs...)
         """
         configuration = self.configuration
-        configuration.update(self.snapshot.configuration)
         num_epochs = configuration.get('num_epochs', 10)
         batch_size = configuration.get('batch_size', 64)
         input_size = configuration.get('input_size', 256)
 
         # sometimes = lambda aug: iaa.Sometimes(0.5, aug)
         # DATA TRANSFORMERS
+        def gray_to_rgb(x):
+            return x.convert('RGB')
+
         data_transforms = {
-            'train': torchvision.transforms.Compose([
+            'train': [
                 iaa.Resize({"height": input_size, "width": input_size}),
-                # iaa.Superpixels(p_replace=(0, 0.5), n_segments=(10, 50)),
                 iaa.flip.Fliplr(p=0.5),
                 iaa.flip.Flipud(p=0.2),
-                iaa.CropAndPad(percent=(-0.11, 0.11), pad_mode=ia.ALL, pad_cval=(0, 255)),
-                np.copy,
+                torchvision.transforms.ToPILImage(),
+                gray_to_rgb,
                 torchvision.transforms.ToTensor(),
                 torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-            ]),
-            # 'val': torchvision.transforms.Compose([
-            #     torchvision.transforms.ToPILImage(),
-            #     torchvision.transforms.Resize((input_size, input_size)),
-            #     torchvision.transforms.ToTensor(),
-            #     torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-            # ])
+            ],
             'val': [torchvision.transforms.ToPILImage(),
+                    gray_to_rgb,
                     torchvision.transforms.Resize((input_size, input_size)),
                     torchvision.transforms.ToTensor(),
                     torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])]
