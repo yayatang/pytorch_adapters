@@ -103,14 +103,14 @@ class ModelAdapter(dl.BaseModelAdapter):
                                               dataset_entity=self.snapshot.dataset,
                                               annotation_type=dl.AnnotationType.CLASSIFICATION,
                                               transforms=data_transforms['train'],
-                                              id_to_label_map=self.snapshot.configuration['id_to_label_map'],
+                                              id_to_label_map=self.snapshot.id_to_label_map,
                                               class_balancing=False
                                               )
         val_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'validation'),
                                             dataset_entity=self.snapshot.dataset,
                                             annotation_type=dl.AnnotationType.CLASSIFICATION,
                                             transforms=data_transforms['val'],
-                                            id_to_label_map=self.snapshot.configuration['id_to_label_map'],
+                                            id_to_label_map=self.snapshot.id_to_label_map,
                                             )
 
         dataloaders = {'train': DataLoader(train_dataset,
@@ -290,7 +290,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         batch_annotations = list()
         for img_prediction in batch_predictions:
             pred_score, high_pred_index = torch.max(img_prediction, 0)
-            pred_label = self.snapshot.id_to_label_map.get(str(high_pred_index.item()), 'UNKNOWN')
+            pred_label = self.snapshot.id_to_label_map.get(int(high_pred_index.item()), 'UNKNOWN')
             collection = dl.AnnotationCollection()
             collection.add(annotation_definition=dl.Classification(label=pred_label),
                            model_info={'name': self.model_entity.name,
@@ -298,8 +298,8 @@ class ModelAdapter(dl.BaseModelAdapter):
                                        'model_id': self.model_entity.id,
                                        'snapshot_id': self.snapshot.id})
             logger.debug("Predicted {:20} ({:1.3f})".format(pred_label, pred_score))
-            batch_predictions.append(collection)
-        return batch_predictions
+            batch_annotations.append(collection)
+        return batch_annotations
 
     def convert_from_dtlpy(self, data_path, **kwargs):
         """ Convert Dataloop structure data to model structured
