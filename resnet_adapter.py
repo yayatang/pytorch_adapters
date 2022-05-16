@@ -72,6 +72,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         num_epochs = self.configuration.get('num_epochs', 10)
         batch_size = self.configuration.get('batch_size', 64)
         input_size = self.configuration.get('input_size', 256)
+        on_epoch_end_callback = kwargs.get('on_epoch_end_callback')
 
         # sometimes = lambda aug: iaa.Sometimes(0.5, aug)
         # DATA TRANSFORMERS
@@ -219,6 +220,13 @@ class ModelAdapter(dl.BaseModelAdapter):
                 # save debugs #
                 ###############
 
+            #############
+            # Callbacks #
+            #############
+            if on_epoch_end_callback is not None:
+                on_epoch_end_callback(i_epoch=epoch,
+                                      n_epoch=num_epochs)
+
         time_elapsed = time.time() - since
         logger.info('Training complete in {:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60))
         logger.info('Best val loss: {:4f}, best acc: {:4f}'.format(best_loss, best_acc))
@@ -339,6 +347,9 @@ def model_creation(project_name, env: str = 'prod'):
                                       'weights_filename': 'model.pth',
                                       'input_size': 256,
                                   },
+                                  default_runtime=dl.KubernetesRuntime(pod_type=dl.INSTANCE_CATALOG_GPU_K80_S,
+                                                                       runner_image='gcr.io/viewo-g/modelmgmt/resnet:0.0.1',
+                                                                       concurrency=1),
                                   entry_point='resnet_adapter.py')
     return model
 

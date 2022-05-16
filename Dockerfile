@@ -1,9 +1,5 @@
 FROM gcr.io/viewo-g/piper/agent/runner/gpu/main:latest
-RUN pip install --user \
-    torch \
-    torchvision \
-    imgaug \
-    scikit-image<0.18
+RUN pip3 install --user torch torchvision imgaug scikit-image
 
 
 # docker build -t gcr.io/viewo-g/modelmgmt/resnet:0.0.1 -f ./Dockerfile  .
