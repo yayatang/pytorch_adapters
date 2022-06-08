@@ -326,9 +326,9 @@ class ModelAdapter(dl.BaseModelAdapter):
 
 def _get_imagenet_label_json():
     import json
-    with open('imagenet_labels_list.json', 'r') as fh:
+    with open('imagenet_labels.json', 'r') as fh:
         labels = json.load(fh)
-    return labels
+    return list(labels.values())
 
 
 def model_creation(project_name, env: str = 'prod'):
@@ -340,7 +340,7 @@ def model_creation(project_name, env: str = 'prod'):
     model = project.models.create(model_name='ResNet',
                                   description='Global Dataloop ResNet implemeted in pytorch',
                                   output_type=dl.AnnotationType.CLASSIFICATION,
-                                  is_global=True,
+                                  scope='public',
                                   codebase=codebase,
                                   tags=['torch'],
                                   default_configuration={
@@ -349,6 +349,9 @@ def model_creation(project_name, env: str = 'prod'):
                                   },
                                   default_runtime=dl.KubernetesRuntime(pod_type=dl.INSTANCE_CATALOG_GPU_K80_S,
                                                                        runner_image='gcr.io/viewo-g/modelmgmt/resnet:0.0.1',
+                                                                       autoscaler=dl.KubernetesRabbitmqAutoscaler(
+                                                                           min_replicas=0,
+                                                                           max_replicas=1),
                                                                        concurrency=1),
                                   entry_point='resnet_adapter.py')
     return model
@@ -365,7 +368,7 @@ def snapshot_creation(project_name, model: dl.Model, env: str = 'prod', resnet_v
                                       description='resnset{} pretrained on imagenet'.format(resnet_ver),
                                       tags=['pretrained', 'imagenet'],
                                       dataset_id=None,
-                                      is_global=True,
+                                      scope='public',
                                       # status='trained',
                                       configuration={'weights_filename': 'model.pth',
                                                      'classes_filename': 'classes.json'},
