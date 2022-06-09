@@ -199,6 +199,14 @@ class ModelAdapter(dl.BaseModelAdapter):
                 logger.info(
                     f'Epoch {epoch}/{num_epochs} - {phase} - Loss: {epoch_loss:.4f}, Acc: {epoch_acc:.4f}, Duration {(time.time() - epoch_time):.2f}')
                 # deep copy the model
+                self.snapshot.add_metric_samples(samples=dl.SnapshotMetricSample(figure='loss',
+                                                                                 legend=phase,
+                                                                                 x=epoch,
+                                                                                 y=epoch_loss))
+                self.snapshot.add_metric_samples(samples=dl.SnapshotMetricSample(figure='acc',
+                                                                                 legend=phase,
+                                                                                 x=epoch,
+                                                                                 y=epoch_acc))
                 self.metrics['history'].append({'phase': phase,
                                                 'epoch': epoch,
                                                 'loss': epoch_loss,
@@ -348,7 +356,7 @@ def model_creation(project_name, env: str = 'prod'):
                                       'input_size': 256,
                                   },
                                   default_runtime=dl.KubernetesRuntime(pod_type=dl.INSTANCE_CATALOG_GPU_K80_S,
-                                                                       runner_image='gcr.io/viewo-g/modelmgmt/resnet:0.0.1',
+                                                                       runner_image='gcr.io/viewo-g/modelmgmt/resnet:0.0.6',
                                                                        autoscaler=dl.KubernetesRabbitmqAutoscaler(
                                                                            min_replicas=0,
                                                                            max_replicas=1),
