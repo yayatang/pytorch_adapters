@@ -23,11 +23,11 @@ logger = logging.getLogger('resnet-adapter')
 class ModelAdapter(dl.BaseModelAdapter):
     """
     resnet Model adapter using pytorch.
-    The class bind Dataloop model and snapshot entities with model code implementation
+    The class bind Dataloop model and model entities with model code implementation
     """
 
-    def __init__(self, model_entity):
-        super(ModelAdapter, self).__init__(model_entity)
+    def __init__(self, model_entity=None):
+        super(ModelAdapter, self).__init__(model_entity=model_entity)
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     def load(self, local_path, **kwargs):
@@ -35,11 +35,11 @@ class ModelAdapter(dl.BaseModelAdapter):
 
             Virtual method - need to implement
 
-            This function is called by load_from_snapshot (download to local and then loads)
+            This function is called by load_from_model (download to local and then loads)
 
         :param local_path: `str` directory path in local FileSystem
         """
-        weights_filename = self.snapshot.configuration.get('weights_filename', 'model.pth')
+        weights_filename = self.model_entity.configuration.get('weights_filename', 'model.pth')
         # load model arch and state
         model_path = os.path.join(local_path, weights_filename)
         logger.info("Loading a model from {}".format(local_path))
@@ -54,7 +54,7 @@ class ModelAdapter(dl.BaseModelAdapter):
 
             Virtual method - need to implement
 
-            the function is called in save_to_snapshot which first save locally and then uploads to snapshot entity
+            the function is called in save_to_model which first save locally and then uploads to model entity
 
         :param local_path: `str` directory path in local FileSystem
         """
@@ -63,7 +63,7 @@ class ModelAdapter(dl.BaseModelAdapter):
         self.configuration['weights_filename'] = weights_filename
 
     def train(self, data_path, output_path, **kwargs):
-        """ Train the model according to data in local_path and save the snapshot to dump_path
+        """ Train the model according to data in local_path and save the model to dump_path
 
             Virtual method - need to implement
         :param data_path: `str` local File System path to where the data was downloaded and converted at
@@ -101,17 +101,17 @@ class ModelAdapter(dl.BaseModelAdapter):
         # Prepare the data #
         ####################
         train_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'train'),
-                                              dataset_entity=self.snapshot.dataset,
+                                              dataset_entity=self.model_entity.dataset,
                                               annotation_type=dl.AnnotationType.CLASSIFICATION,
                                               transforms=data_transforms['train'],
-                                              id_to_label_map=self.snapshot.id_to_label_map,
+                                              id_to_label_map=self.model_entity.id_to_label_map,
                                               class_balancing=False
                                               )
         val_dataset = DatasetGeneratorTorch(data_path=os.path.join(data_path, 'validation'),
-                                            dataset_entity=self.snapshot.dataset,
+                                            dataset_entity=self.model_entity.dataset,
                                             annotation_type=dl.AnnotationType.CLASSIFICATION,
                                             transforms=data_transforms['val'],
-                                            id_to_label_map=self.snapshot.id_to_label_map,
+                                            id_to_label_map=self.model_entity.id_to_label_map,
                                             )
 
         dataloaders = {'train': DataLoader(train_dataset,
@@ -199,14 +199,16 @@ class ModelAdapter(dl.BaseModelAdapter):
                 logger.info(
                     f'Epoch {epoch}/{num_epochs} - {phase} - Loss: {epoch_loss:.4f}, Acc: {epoch_acc:.4f}, Duration {(time.time() - epoch_time):.2f}')
                 # deep copy the model
-                self.snapshot.add_metric_samples(samples=dl.SnapshotMetricSample(figure='loss',
-                                                                                 legend=phase,
-                                                                                 x=epoch,
-                                                                                 y=epoch_loss))
-                self.snapshot.add_metric_samples(samples=dl.SnapshotMetricSample(figure='acc',
-                                                                                 legend=phase,
-                                                                                 x=epoch,
-                                                                                 y=epoch_acc))
+                self.model_entity.add_log_samples(samples=dl.LogSample(figure='loss',
+                                                                       legend=phase,
+                                                                       x=epoch,
+                                                                       y=epoch_loss),
+                                                  dataset_id=self.model_entity.dataset_id)
+                self.model_entity.add_log_samples(samples=dl.LogSample(figure='accuracy',
+                                                                       legend=phase,
+                                                                       x=epoch,
+                                                                       y=epoch_acc),
+                                                  dataset_id=self.model_entity.dataset_id)
                 self.metrics['history'].append({'phase': phase,
                                                 'epoch': epoch,
                                                 'loss': epoch_loss,
@@ -306,13 +308,13 @@ class ModelAdapter(dl.BaseModelAdapter):
         batch_annotations = list()
         for img_prediction in batch_predictions:
             pred_score, high_pred_index = torch.max(img_prediction, 0)
-            pred_label = self.snapshot.id_to_label_map.get(int(high_pred_index.item()), 'UNKNOWN')
+            pred_label = self.model_entity.id_to_label_map.get(int(high_pred_index.item()), 'UNKNOWN')
             collection = dl.AnnotationCollection()
             collection.add(annotation_definition=dl.Classification(label=pred_label),
                            model_info={'name': self.model_entity.name,
                                        'confidence': pred_score.item(),
                                        'model_id': self.model_entity.id,
-                                       'snapshot_id': self.snapshot.id})
+                                       'dataset_id': self.model_entity.dataset_id})
             logger.debug("Predicted {:20} ({:1.3f})".format(pred_label, pred_score))
             batch_annotations.append(collection)
         return batch_annotations
@@ -339,56 +341,71 @@ def _get_imagenet_label_json():
     return list(labels.values())
 
 
-def model_creation(project_name, env: str = 'prod'):
-    dl.setenv(env)
-    project = dl.projects.get(project_name)
+def package_creation(project_name, env: str = 'prod'):
+    module_json = ModelAdapter.__dtlpy__
+    module_json['entryPoint'] = 'resnet_adapter.py'
+    module_json['className'] = 'ModelAdapter'
+    module = dl.PackageModule.from_json(module_json)
+    package = project.packages.push(package_name='resnet',
+                                    src_path=os.getcwd(),
+                                    # description='Global Dataloop ResNet implemented in pytorch',
+                                    # scope='public',
+                                    package_type='ml',
+                                    codebase=dl.GitCodebase(git_url='https://github.com/dataloop-ai/pytorch_adapters',
+                                                            git_tag='master'),
+                                    modules=[module],
+                                    service_config={
+                                        'runtime': dl.KubernetesRuntime(pod_type=dl.INSTANCE_CATALOG_GPU_K80_S,
+                                                                        runner_image='gcr.io/viewo-g/modelmgmt/resnet:0.0.6',
+                                                                        autoscaler=dl.KubernetesRabbitmqAutoscaler(
+                                                                            min_replicas=0,
+                                                                            max_replicas=1),
+                                                                        concurrency=1).to_json()},
+                                    metadata={
+                                        'system': {'ml': {'defaultConfiguration': {'weights_filename': 'model.pth',
+                                                                                   'input_size': 256},
+                                                          'outputType': dl.AnnotationType.CLASSIFICATION,
+                                                          'tags': ['torch'], }}})
+    # package.metadata = {'system': {'ml': {'defaultConfiguration': {'weights_filename': 'model.pth',
+    #                                                                'input_size': 256},
+    #                                       'outputType': dl.AnnotationType.CLASSIFICATION,
+    #                                       'tags': ['torch'], }}}
+    # package = package.update()
+    return package
 
-    codebase = dl.GitCodebase(git_url='https://github.com/dataloop-ai/pytorch_adapters',
-                              git_tag='master')
-    model = project.models.create(model_name='ResNet',
-                                  description='Global Dataloop ResNet implemeted in pytorch',
-                                  output_type=dl.AnnotationType.CLASSIFICATION,
+
+def model_creation(project_name, package: dl.Package, env: str = 'prod', resnet_ver='50'):
+    # bucket = dl.buckets.create(dl.BucketType.GCS,
+    #                            gcs_project_name='viewo-main',
+    #                            gcs_bucket_name='model-mgmt-snapshots',
+    #                            gcs_prefix='ResNet{}'.format(resnet_ver))
+    bucket = project.buckets.create(dl.BucketType.ITEM)
+    bucket.upload(local_path=r"C:\Users\Shabtay\Downloads\New folder")
+    model = package.models.create(model_name='pretrained---resnet{}'.format(resnet_ver),
+                                  description='resnset{} pretrained on imagenet'.format(resnet_ver),
+                                  tags=['pretrained', 'imagenet'],
+                                  dataset_id=None,
                                   scope='public',
-                                  codebase=codebase,
-                                  tags=['torch'],
-                                  default_configuration={
-                                      'weights_filename': 'model.pth',
-                                      'input_size': 256,
-                                  },
-                                  default_runtime=dl.KubernetesRuntime(pod_type=dl.INSTANCE_CATALOG_GPU_K80_S,
-                                                                       runner_image='gcr.io/viewo-g/modelmgmt/resnet:0.0.6',
-                                                                       autoscaler=dl.KubernetesRabbitmqAutoscaler(
-                                                                           min_replicas=0,
-                                                                           max_replicas=1),
-                                                                       concurrency=1),
-                                  entry_point='resnet_adapter.py')
+                                  status='trained',
+                                  configuration={'weights_filename': 'model.pth',
+                                                 'classes_filename': 'classes.json'},
+                                  project_id=project.id,
+                                  bucket=bucket,
+                                  labels=_get_imagenet_label_json()
+                                  )
     return model
 
 
-def snapshot_creation(project_name, model: dl.Model, env: str = 'prod', resnet_ver='50'):
+def package_and_model_creation(project_name, env: str = 'prod', resnet_ver='50'):
+    package = package_creation(project_name, env=env)
+    print("Package : {} - {} created".format(package.name, package.id))
+    model = model_creation(project_name, package=package, env=env, resnet_ver=resnet_ver)
+    print("Model : {} - {} created".format(model.name, model.id))
+
+
+if __name__ == "__main__":
+    env = 'dev'
+    project_name = 'Sheep Face - Model Mgmt'
     dl.setenv(env)
     project = dl.projects.get(project_name)
-    bucket = dl.buckets.create(dl.BucketType.GCS,
-                               gcs_project_name='viewo-main',
-                               gcs_bucket_name='model-mgmt-snapshots',
-                               gcs_prefix='ResNet{}'.format(resnet_ver))
-    snapshot = model.snapshots.create(snapshot_name='pretrained-resnet{}'.format(resnet_ver),
-                                      description='resnset{} pretrained on imagenet'.format(resnet_ver),
-                                      tags=['pretrained', 'imagenet'],
-                                      dataset_id=None,
-                                      scope='public',
-                                      # status='trained',
-                                      configuration={'weights_filename': 'model.pth',
-                                                     'classes_filename': 'classes.json'},
-                                      project_id=project.id,
-                                      bucket=bucket,
-                                      labels=_get_imagenet_label_json()
-                                      )
-    return snapshot
-
-
-def model_and_snapshot_creation(project_name, env: str = 'prod', resnet_ver='50'):
-    model = model_creation(project_name, env=env)
-    print("Model : {} - {} created".format(model.name, model.id))
-    snapshot = snapshot_creation(project_name, model=model, env=env, resnet_ver=resnet_ver)
-    print("Snapshot : {} - {} created".format(snapshot.name, snapshot.id))
+    package = project.packages.get('resnet')
