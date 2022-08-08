@@ -20,6 +20,9 @@ from dtlpy.utilities.dataset_generators.dataset_generator_torch import DatasetGe
 logger = logging.getLogger('resnet-adapter')
 
 
+@dl.Package.defs.module(name='model-adapter',
+                        description='Model Adapter for ResNet classification',
+                        init_inputs={'model_entity': dl.Model})
 class ModelAdapter(dl.BaseModelAdapter):
     """
     resnet Model adapter using pytorch.
@@ -221,6 +224,9 @@ class ModelAdapter(dl.BaseModelAdapter):
                         best_model_wts = copy.deepcopy(self.model.state_dict())
                         logger.info(
                             f'Validation loss decreased ({best_loss:.6f} --> {epoch_loss:.6f}).  Saving model ...')
+                        torch.save(self.model, os.path.join(output_path, 'best.pth'))
+                        # self.model_entity.bucket.sync(local_path=output_path)
+
                     else:
                         not_improving_epochs += 1
                     if not_improving_epochs > patience_epochs:
@@ -342,18 +348,21 @@ def _get_imagenet_label_json():
 
 
 def package_creation(project_name, env: str = 'prod'):
-    module_json = ModelAdapter.__dtlpy__
-    module_json['entryPoint'] = 'resnet_adapter.py'
-    module_json['className'] = 'ModelAdapter'
-    module = dl.PackageModule.from_json(module_json)
+    metadata = dl.Package.defs.get_ml_metadata(cls=ModelAdapter,
+                                               default_configuration={'weights_filename': 'model.pth',
+                                                                      'input_size': 256},
+                                               output_type=dl.AnnotationType.CLASSIFICATION,
+                                               tags=['torch']
+                                               )
+    modules = dl.Package.defs.module_from_file(entry_point='resnet_adapter.py')
     package = project.packages.push(package_name='resnet',
                                     src_path=os.getcwd(),
                                     # description='Global Dataloop ResNet implemented in pytorch',
                                     # scope='public',
                                     package_type='ml',
                                     codebase=dl.GitCodebase(git_url='https://github.com/dataloop-ai/pytorch_adapters',
-                                                            git_tag='master'),
-                                    modules=[module],
+                                                            git_tag='mgmt3'),
+                                    modules=modules,
                                     service_config={
                                         'runtime': dl.KubernetesRuntime(pod_type=dl.INSTANCE_CATALOG_GPU_K80_S,
                                                                         runner_image='gcr.io/viewo-g/modelmgmt/resnet:0.0.6',
@@ -361,16 +370,16 @@ def package_creation(project_name, env: str = 'prod'):
                                                                             min_replicas=0,
                                                                             max_replicas=1),
                                                                         concurrency=1).to_json()},
-                                    metadata={
-                                        'system': {'ml': {'defaultConfiguration': {'weights_filename': 'model.pth',
-                                                                                   'input_size': 256},
-                                                          'outputType': dl.AnnotationType.CLASSIFICATION,
-                                                          'tags': ['torch'], }}})
+                                    metadata=metadata)
     # package.metadata = {'system': {'ml': {'defaultConfiguration': {'weights_filename': 'model.pth',
     #                                                                'input_size': 256},
     #                                       'outputType': dl.AnnotationType.CLASSIFICATION,
     #                                       'tags': ['torch'], }}}
     # package = package.update()
+    s = package.services.list().items[0]
+    s.package_revision = package.version
+    s.versions['dtlpy'] = '1.63.2'
+    s.update(True)
     return package
 
 

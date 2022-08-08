@@ -75,7 +75,7 @@ def trn_service():
 
     to_project.models.list().print()
     to_project.packages.list().print()
-    m = to_project.models.get(model_name='new sheeps exp3')
+    m = to_project.models.get(model_name='new sheeps exp2')
 
     sec, res = dl.client_api.gen_request("post",
                                          f"/ml/models/{m.id}/train")
