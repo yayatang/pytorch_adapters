@@ -16,7 +16,7 @@ import numpy as np
 import json
 
 dl.setenv('dev')
-model_entity = dl.models.get(None, '62e296562cb0d16cad303836')
+model_entity = dl.models.get(None, '63064bb0e214a71bfbefdb44')
 package = model_entity.package
 # model_entity.bucket.upload(r"C:\Users\Shabtay\Downloads\New folder")
 adapter = ModelAdapter(None)
@@ -32,16 +32,16 @@ def cln():
     to_dataset = dl.datasets.get(None, '62e000ad95c4f602ae9691c8')
     to_project = dl.projects.get(None, 'a179220f-bd40-4a75-97e3-fbe05c9f276f')
 
-    m = model_entity.clone(model_name='new sheeps exp2',
+    m = model_entity.clone(model_name='new sheeps exp3',
                            description='exp 2',
                            labels=list(to_dataset.labels_flat_dict.keys()),
                            dataset_id=to_dataset.id,
                            project_id=to_project.id)
 
-
+# cln()
 def trn():
     package.models.list().print()
-    m = dl.models.get(model_id='62e296da2cb0d17bc2303837')
+    m = dl.models.get(model_id='6306532495a9ccb57a8d928b')
     # m.labels = list(m.dataset.labels_flat_dict.keys())
     # m.update()
 
@@ -67,7 +67,7 @@ def trn_service():
     to_dataset = dl.datasets.get(None, '62e000ad95c4f602ae9691c8')
     to_project = dl.projects.get(None, 'a179220f-bd40-4a75-97e3-fbe05c9f276f')
 
-    m = model_entity.clone(model_name='new sheeps exp3',
+    m = model_entity.clone(model_name='new sheeps exp5',
                            description='exp 3',
                            labels=list(to_dataset.labels_flat_dict.keys()),
                            dataset_id=to_dataset.id,

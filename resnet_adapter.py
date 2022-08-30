@@ -383,25 +383,31 @@ def package_creation(project_name, env: str = 'prod'):
     return package
 
 
-def model_creation(project_name, package: dl.Package, env: str = 'prod', resnet_ver='50'):
+def model_creation(package: dl.Package, env: str = 'prod', resnet_ver='50'):
     # bucket = dl.buckets.create(dl.BucketType.GCS,
     #                            gcs_project_name='viewo-main',
     #                            gcs_bucket_name='model-mgmt-snapshots',
     #                            gcs_prefix='ResNet{}'.format(resnet_ver))
-    bucket = project.buckets.create(dl.BucketType.ITEM)
-    bucket.upload(local_path=r"C:\Users\Shabtay\Downloads\New folder")
-    model = package.models.create(model_name='pretrained---resnet{}'.format(resnet_ver),
+    # artifact = dl.LocalArtifact(path=os.getcwd())
+
+    model = package.models.create(model_name='pretrained-resnet{}'.format(resnet_ver),
                                   description='resnset{} pretrained on imagenet'.format(resnet_ver),
                                   tags=['pretrained', 'imagenet'],
                                   dataset_id=None,
-                                  scope='public',
+                                  # scope='public',
+                                  scope='project',
                                   status='trained',
                                   configuration={'weights_filename': 'model.pth',
                                                  'classes_filename': 'classes.json'},
                                   project_id=project.id,
-                                  bucket=bucket,
-                                  labels=_get_imagenet_label_json()
+                                  labels=_get_imagenet_label_json(),
+
                                   )
+    artifact = dl.UrlArtifact(url='https://storage.googleapis.com/model-mgmt-snapshots/ResNet50/model.pth',
+                              filename='model.pth')
+    model.model_artifacts = [artifact]
+    model.update()
+    # artifact = model.artifacts.upload(filepath=r"C:\Users\Shabtay\Downloads\New folder\*")
     return model
 
 
@@ -418,3 +424,5 @@ if __name__ == "__main__":
     dl.setenv(env)
     project = dl.projects.get(project_name)
     package = project.packages.get('resnet')
+    package.artifacts.list()
+    model_creation(package=package)
