@@ -347,7 +347,7 @@ def _get_imagenet_label_json():
     return list(labels.values())
 
 
-def package_creation(project_name, env: str = 'prod'):
+def package_creation(project: dl.Project):
     metadata = dl.Package.defs.get_ml_metadata(cls=ModelAdapter,
                                                default_configuration={'weights_filename': 'model.pth',
                                                                       'input_size': 256},
@@ -358,7 +358,7 @@ def package_creation(project_name, env: str = 'prod'):
     package = project.packages.push(package_name='resnet',
                                     src_path=os.getcwd(),
                                     # description='Global Dataloop ResNet implemented in pytorch',
-                                    # scope='public',
+                                    is_global=True,
                                     package_type='ml',
                                     codebase=dl.GitCodebase(git_url='https://github.com/dataloop-ai/pytorch_adapters',
                                                             git_tag='mgmt3'),
@@ -383,7 +383,7 @@ def package_creation(project_name, env: str = 'prod'):
     return package
 
 
-def model_creation(package: dl.Package, env: str = 'prod', resnet_ver='50'):
+def model_creation(package: dl.Package, resnet_ver='50'):
     # bucket = dl.buckets.create(dl.BucketType.GCS,
     #                            gcs_project_name='viewo-main',
     #                            gcs_bucket_name='model-mgmt-snapshots',
@@ -394,28 +394,22 @@ def model_creation(package: dl.Package, env: str = 'prod', resnet_ver='50'):
                                   description='resnset{} pretrained on imagenet'.format(resnet_ver),
                                   tags=['pretrained', 'imagenet'],
                                   dataset_id=None,
-                                  # scope='public',
-                                  scope='project',
+                                  scope='public',
+                                  # scope='project',
                                   status='trained',
                                   configuration={'weights_filename': 'model.pth',
-                                                 'classes_filename': 'classes.json'},
+                                                 'batch_size': 16,
+                                                 'num_epochs': 10},
                                   project_id=project.id,
                                   labels=_get_imagenet_label_json(),
 
                                   )
-    artifact = dl.UrlArtifact(url='https://storage.googleapis.com/model-mgmt-snapshots/ResNet50/model.pth',
-                              filename='model.pth')
+    artifact = dl.LinkArtifact(url='https://storage.googleapis.com/model-mgmt-snapshots/ResNet50/model.pth',
+                               filename='model.pth')
     model.model_artifacts = [artifact]
     model.update()
     # artifact = model.artifacts.upload(filepath=r"C:\Users\Shabtay\Downloads\New folder\*")
     return model
-
-
-def package_and_model_creation(project_name, env: str = 'prod', resnet_ver='50'):
-    package = package_creation(project_name, env=env)
-    print("Package : {} - {} created".format(package.name, package.id))
-    model = model_creation(project_name, package=package, env=env, resnet_ver=resnet_ver)
-    print("Model : {} - {} created".format(model.name, model.id))
 
 
 if __name__ == "__main__":
