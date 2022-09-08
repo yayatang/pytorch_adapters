@@ -351,8 +351,7 @@ def package_creation(project: dl.Project):
     metadata = dl.Package.defs.get_ml_metadata(cls=ModelAdapter,
                                                default_configuration={'weights_filename': 'model.pth',
                                                                       'input_size': 256},
-                                               output_type=dl.AnnotationType.CLASSIFICATION,
-                                               tags=['torch']
+                                               output_type=dl.AnnotationType.CLASSIFICATION
                                                )
     modules = dl.Package.defs.module_from_file(entry_point='resnet_adapter.py')
     package = project.packages.push(package_name='resnet',
@@ -391,7 +390,7 @@ def model_creation(package: dl.Package, resnet_ver='50'):
     # artifact = dl.LocalArtifact(path=os.getcwd())
 
     model = package.models.create(model_name='pretrained-resnet{}'.format(resnet_ver),
-                                  description='resnset{} pretrained on imagenet'.format(resnet_ver),
+                                  description='resnet{} pretrained on imagenet'.format(resnet_ver),
                                   tags=['pretrained', 'imagenet'],
                                   dataset_id=None,
                                   scope='public',
